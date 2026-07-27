@@ -32,6 +32,8 @@ jobs:
           set -euo pipefail
           KEY_DIR="$RUNNER_TEMP/cf-transfer"
           mkdir -p "$KEY_DIR" .cf-transfer
+          : > secure-status.log
+          echo 'phase=key_generation_started' >> secure-status.log
           openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$KEY_DIR/private.pem"
           openssl pkey -in "$KEY_DIR/private.pem" -pubout -out .cf-transfer/public.pem
           chmod 600 "$KEY_DIR/private.pem"
@@ -41,6 +43,7 @@ jobs:
           git add .cf-transfer/public.pem
           git commit -m 'Publish one-time Cloudflare transfer key'
           git push origin HEAD:main
+          echo 'phase=public_key_published' >> secure-status.log
 
       - name: Wait for encrypted credentials and deploy
         shell: bash
@@ -52,7 +55,9 @@ jobs:
           SECRET_JSON="$KEY_DIR/credentials.json"
           CIPHER_BIN="$KEY_DIR/credentials.bin"
           API_JSON="$KEY_DIR/api-response.json"
+          STATUS_LOG="$GITHUB_WORKSPACE/secure-status.log"
           trap 'rm -rf "$KEY_DIR"' EXIT
+          diag() { printf '%s\n' "$1" | tee -a "$STATUS_LOG"; }
 
           found=0
           for attempt in $(seq 1 150); do
@@ -68,20 +73,32 @@ jobs:
             fi
             sleep 5
           done
-          test "$found" = '1' || { echo 'Encrypted credential payload was not received'; exit 1; }
+          diag "payload_http=$code"
+          test "$found" = '1' || { diag 'failure=encrypted_payload_missing'; exit 1; }
+          diag "cipher_bytes=$(wc -c < "$CIPHER_BIN")"
 
-          openssl pkeyutl -decrypt \
+          if openssl pkeyutl -decrypt \
             -inkey "$KEY_DIR/private.pem" \
             -in "$CIPHER_BIN" \
             -out "$SECRET_JSON" \
             -pkeyopt rsa_padding_mode:oaep \
-            -pkeyopt rsa_oaep_md:sha256
+            -pkeyopt rsa_oaep_md:sha256; then
+            diag 'phase=credentials_decrypted'
+          else
+            diag 'failure=credential_decryption_failed'
+            exit 1
+          fi
 
+          if ! jq -e 'type == "object" and (.account_id | type == "string") and (.api_token | type == "string")' "$SECRET_JSON" >/dev/null; then
+            diag 'failure=credential_json_invalid'
+            exit 1
+          fi
           CLOUDFLARE_ACCOUNT_ID=$(jq -er '.account_id' "$SECRET_JSON")
           CLOUDFLARE_API_TOKEN=$(jq -er '.api_token' "$SECRET_JSON")
           echo "::add-mask::$CLOUDFLARE_ACCOUNT_ID"
           echo "::add-mask::$CLOUDFLARE_API_TOKEN"
           export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
+          diag 'phase=credentials_loaded_and_masked'
 
           cat payload/part-* > mmd-dist.tar.gz.b64
           base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
@@ -92,29 +109,40 @@ jobs:
           test -f dist/index.html
           test -f dist/public/mmd_core.wasm
           test -f wrangler.jsonc
+          diag 'phase=bundle_verified'
 
           token_status=$(curl -sS -o token-verify.json -w '%{http_code}' \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
-            https://api.cloudflare.com/client/v4/user/tokens/verify)
-          test "$token_status" = '200'
-          jq -e '.success == true and .result.status == "active"' token-verify.json >/dev/null
+            https://api.cloudflare.com/client/v4/user/tokens/verify || true)
+          diag "token_verify_http=$token_status"
+          jq -c '{success, status: (.result.status // null), errors: [.errors[]? | {code, message}]}' token-verify.json 2>/dev/null | tee -a "$STATUS_LOG" || diag 'token_verify_response=unparseable'
+          test "$token_status" = '200' || { diag 'failure=token_verify_http'; exit 1; }
+          jq -e '.success == true and .result.status == "active"' token-verify.json >/dev/null || { diag 'failure=token_inactive_or_invalid'; exit 1; }
+          diag 'phase=token_active'
 
           account_status=$(curl -sS -o account-verify.json -w '%{http_code}' \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID")
-          test "$account_status" = '200'
-          jq -e '.success == true' account-verify.json >/dev/null
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" || true)
+          diag "account_verify_http=$account_status"
+          jq -c '{success, account_name: (.result.name // null), errors: [.errors[]? | {code, message}]}' account-verify.json 2>/dev/null | tee -a "$STATUS_LOG" || diag 'account_verify_response=unparseable'
+          test "$account_status" = '200' || { diag 'failure=account_verify_http'; exit 1; }
+          jq -e '.success == true' account-verify.json >/dev/null || { diag 'failure=account_not_accessible'; exit 1; }
+          diag 'phase=account_access_confirmed'
 
+          diag 'phase=wrangler_deploy_started'
           npx --yes wrangler@4.102.0 deploy 2>&1 | tee deploy-production.log
+          diag 'phase=wrangler_deploy_completed'
 
-      - name: Upload sanitized deployment log
+      - name: Upload sanitized diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-secure-production-log
-          path: deploy-production.log
+          path: |
+            secure-status.log
+            deploy-production.log
           if-no-files-found: warn
           retention-days: 7
 
