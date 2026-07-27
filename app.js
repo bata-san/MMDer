@@ -7,7 +7,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const BUILD_VERSION = 'v3.2.0';
+const BUILD_VERSION = 'v3.3.0';
 $('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: true, outlineScale: 1, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, motionBlend: .22, livingMotion: true, physicsSettings: { stiffness: .5, damping: .2, gravity: 1, wind: 0, turbulence: 0, quality: 3, air: .25, parts: { hair: true, cloth: true, body: true } }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const renderRatio = () => Math.min(devicePixelRatio, 2);
@@ -105,11 +105,28 @@ async function importAssets(files, loadImmediately = false) { const saved = []; 
 async function loadAssetModel(asset) { await loadModel(asset.file); }
 async function applyAssetMotion(asset) { await applyMotion(asset.file); }
 
+function createDefaultIdleClip(mesh) {
+  const times = [0, 1, 2, 3, 4], tracks = [
+    new THREE.NumberKeyframeTrack('.position[y]', times, [0, .06, 0, -.04, 0]),
+    new THREE.NumberKeyframeTrack('.rotation[y]', times, [0, .035, 0, -.035, 0])
+  ];
+  const bones = []; mesh.traverse(node => { if (node.isBone) bones.push(node); });
+  const targets = [
+    { re: /上半身2|upper.?body.?2/i, x: .035, y: .012 },
+    { re: /上半身|胸|chest|spine/i, x: .055, y: .02 },
+    { re: /首|neck/i, x: .03, y: .028 },
+    { re: /頭|head/i, x: .022, y: .04 }
+  ];
+  targets.forEach(target => { const bone = bones.find(node => target.re.test(node.name)); if (!bone) return; const values = []; const base = bone.quaternion.clone(); [0, 1, 2, 3, 4].forEach((_, i) => { const phase = Math.sin(i * Math.PI / 2); const offset = new THREE.Quaternion().setFromEuler(new THREE.Euler(phase * target.x, phase * target.y, 0)); values.push(...base.clone().multiply(offset).normalize().toArray()); }); tracks.push(new THREE.QuaternionKeyframeTrack(`.bones[${bone.name}].quaternion`, times, values)); });
+  return new THREE.AnimationClip('Default MMD Idle', 4, tracks);
+}
 function createMotionController(mesh) {
   const mixer = new THREE.AnimationMixer(mesh);
-  const controller = { mesh, mixer, clips: new Map(), actions: new Map(), current: null, currentName: '', breath: 0, head: 0, blink: 0, nextBlink: 2.5, bones: {}, morphs: [] };
+  const idle = createDefaultIdleClip(mesh);
+  const controller = { mesh, mixer, clips: new Map(), actions: new Map(), defaultClip: idle, current: null, currentName: '', breath: 0, head: 0, blink: 0, nextBlink: 2.5, bones: {}, morphs: [] };
   mesh.traverse(node => { if (!node.isBone) return; if (!controller.bones.chest && /上半身|胸|chest|spine/i.test(node.name)) controller.bones.chest = node; if (!controller.bones.head && /頭|head|neck/i.test(node.name)) controller.bones.head = node; });
   morphMeshes(mesh).forEach(node => Object.entries(node.morphTargetDictionary).forEach(([name, index]) => { if (/まばたき|blink|eye.?close/i.test(name)) controller.morphs.push({ node, index, base: node.morphTargetInfluences[index] || 0 }); }));
+  playMotion(controller, idle, 'Default Idle', .2);
   return controller;
 }
 function playMotion(controller, clip, name = clip.name || 'VMD', blend = state.motionBlend) {
@@ -134,7 +151,7 @@ function updateLivingMotion(controller, dt, time) {
   }
 }
 
-function configureMmdMaterial(material) { if (!material) return material; if (material.map) material.map.colorSpace = THREE.SRGBColorSpace; if (material.emissiveMap) material.emissiveMap.colorSpace = THREE.SRGBColorSpace; [material.alphaMap, material.normalMap, material.bumpMap, material.aoMap, material.gradientMap].filter(Boolean).forEach(texture => texture.colorSpace = THREE.NoColorSpace); if (material.gradientMap) { material.gradientMap.minFilter = THREE.NearestFilter; material.gradientMap.magFilter = THREE.NearestFilter; material.gradientMap.generateMipmaps = false; material.gradientMap.needsUpdate = true; } material.side = THREE.DoubleSide; material.depthTest = true; material.dithering = true; if (material.map && (material.opacity ?? 1) >= .999) { material.transparent = false; material.alphaTest = Math.max(material.alphaTest || 0, .05); material.depthWrite = true; } const outline = material.userData?.outlineParameters; if (outline) { outline.thickness = Math.min(.012, Math.max(0, outline.thickness || 0)); outline.mmdBaseThickness = outline.thickness; outline.visible = outline.visible !== false && outline.thickness > 0; } material.needsUpdate = true; return material; }
+function configureMmdMaterial(material) { if (!material) return material; const maps = ['map', 'emissiveMap', 'alphaMap', 'normalMap', 'bumpMap', 'aoMap', 'gradientMap']; maps.forEach(key => { const texture = material[key]; if (!texture) return; const image = texture.image; const valid = image && (image.data || image.width > 0 || image.videoWidth > 0); if (!valid) { material[key] = null; texture.needsUpdate = false; return; } texture.colorSpace = ['map', 'emissiveMap'].includes(key) ? THREE.SRGBColorSpace : THREE.NoColorSpace; }); if (material.gradientMap) { material.gradientMap.minFilter = THREE.NearestFilter; material.gradientMap.magFilter = THREE.NearestFilter; material.gradientMap.generateMipmaps = false; material.gradientMap.needsUpdate = true; } material.side = THREE.DoubleSide; material.depthTest = true; material.dithering = true; const hasCutout = Boolean(material.alphaMap) || (material.map && (material.opacity ?? 1) < .999); if (hasCutout) { material.transparent = true; material.alphaTest = Math.max(material.alphaTest || 0, .05); material.depthWrite = false; } else if (material.map) { material.transparent = false; material.alphaTest = Math.max(material.alphaTest || 0, .05); material.depthWrite = true; } const outline = material.userData?.outlineParameters; if (outline) { outline.thickness = Math.min(.012, Math.max(0, outline.thickness || 0)); outline.mmdBaseThickness = outline.thickness; outline.visible = outline.visible !== false && outline.thickness > 0; } material.needsUpdate = true; return material; }
 function applyOutlineScale() { state.models.forEach(item => item.mesh.traverse(node => { if (!node.isMesh || !node.material) return; (Array.isArray(node.material) ? node.material : [node.material]).forEach(material => { const outline = material?.userData?.outlineParameters; if (outline && outline.mmdBaseThickness !== undefined) outline.thickness = outline.mmdBaseThickness * state.outlineScale; }); })); effect.defaultThickness = .0028 * state.outlineScale; }
 function loadModel(file) { return new Promise(resolve => { setNotice('LOADING MODEL…'); loader.load(url(file), mesh => { mesh.name = file.name; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = false; mesh.userData.motionPhase = Math.random() * Math.PI * 2; mesh.traverse(node => { if (!node.isMesh) return; node.frustumCulled = false; node.castShadow = true; node.receiveShadow = false; const materials = Array.isArray(node.material) ? node.material : [node.material]; materials.forEach(configureMmdMaterial); }); const item = { mesh, file, name: file.name, visible: true, phase: mesh.userData.motionPhase, base: mesh.position.clone(), physics: null, motion: createMotionController(mesh) }; mesh.position.x = state.models.length * 2.7; scene.add(mesh); state.models.push(item); applyOutlineScale(); setActive(item); frameModel(mesh); setNotice(); toast(`${file.name} を読み込みました`); resolve(item); }, undefined, error => { console.error(error); setNotice(); toast(`${file.name} を読めませんでした。コンソールを確認してください`); resolve(null); }); }); }
 function applyMotion(file) { const item = state.active; if (!item) { toast('先にモデルを選択してください'); return Promise.resolve(); } if (ext(file) === 'vpd') return new Promise(resolve => loader.loadVPD(url(file), false, pose => { loader.poseAsVpd(item.mesh, pose); toast(`VPD: ${file.name}`); resolve(); }, undefined, () => { toast('VPD の読み込みに失敗しました'); resolve(); }));
