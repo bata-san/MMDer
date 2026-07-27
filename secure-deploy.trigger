@@ -1,2 +1,2 @@
 Start secure production deployment.
-Diagnostic retry 3 with robust bundle reconstruction.
+Production retry 4 with restored runtime patch.
