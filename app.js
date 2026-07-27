@@ -7,7 +7,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const BUILD_VERSION = 'v2.2.0';
+const BUILD_VERSION = 'v2.2.1';
 $('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: true, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, physicsSettings: { stiffness: .5, damping: .2, gravity: 1, wind: 0, turbulence: 0, quality: 3, air: .25, parts: { hair: true, cloth: true, body: true } }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const clock = new THREE.Clock(), scene = new THREE.Scene(), canvas = $('#scene');
@@ -15,7 +15,7 @@ scene.background = new THREE.Color(0xf1ece5);
 const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, .1, 1000); camera.position.set(8, 5.4, 12);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1;
-const effect = new OutlineEffect(renderer, { defaultThickness: .0028, defaultColor: [0.04, .05, .07], defaultAlpha: .7, defaultKeepAlive: true });
+const effect = new OutlineEffect(renderer, { defaultThickness: .0028, defaultColor: [0.26, .045, .09], defaultAlpha: .88, defaultKeepAlive: true });
 const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
 const controls = new OrbitControls(camera, canvas); controls.target.set(0, 4, 0); controls.enableDamping = true; controls.dampingFactor = .06; controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI; controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }; controls.screenSpacePanning = true;
 let blenderPan = null; canvas.addEventListener('pointerdown', e => { if (e.button !== 1 || !e.shiftKey) return; blenderPan = { x: e.clientX, y: e.clientY }; controls.enabled = false; e.preventDefault(); e.stopImmediatePropagation(); }, true); addEventListener('pointermove', e => { if (!blenderPan) return; const dx = e.clientX - blenderPan.x, dy = e.clientY - blenderPan.y, distance = camera.position.distanceTo(controls.target) * .0015; const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1); camera.position.addScaledVector(right, -dx * distance).addScaledVector(up, dy * distance); controls.target.addScaledVector(right, -dx * distance).addScaledVector(up, dy * distance); blenderPan = { x: e.clientX, y: e.clientY }; }); addEventListener('pointerup', () => { if (blenderPan) { blenderPan = null; controls.enabled = true; } });
