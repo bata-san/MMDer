@@ -10,7 +10,7 @@
 </head>
 <body>
   <canvas id="scene"></canvas>
-  <div id="dropzone" class="dropzone"><div><strong>DROP ASSETS</strong><span>PMX / PMD / VMD / VPD / folder</span></div></div>
+  <div id="dropzone" class="dropzone"><div><strong>DROP ASSETS</strong><span>PMX / PMD / VMD / VPD / ZIP / folder</span></div></div>
   <header><a class="brand" href="#"><i></i>MMD <b>LAB</b><small>realtime viewer</small></a><div class="status"><span id="fps">-- FPS</span><span id="model-count">0 models</span></div></header>
   <main>
     <aside class="panel left">
@@ -19,7 +19,7 @@
         <button class="primary" id="open-models">＋ モデルを読み込む</button>
         <button id="open-motions">＋ モーションを読み込む</button>
         <button id="open-folder">⌘ フォルダをライブラリに追加</button>
-        <input id="models-file" type="file" multiple accept=".pmx,.pmd" hidden />
+        <input id="models-file" type="file" multiple accept=".pmx,.pmd,.zip" hidden />
         <input id="motions-file" type="file" multiple accept=".vmd,.vpd" hidden />
         <input id="folder" type="file" webkitdirectory multiple hidden />
       </section>
@@ -47,11 +47,11 @@
         <section><div class="section-title"><span>SKIN SHADER</span></div><label>SPECULAR <output id="specular-value">0.20</output></label><input id="specular" type="range" min="0" max="1" step=".01" value=".2" /><label>WETNESS <output id="wetness-value">0.00</output></label><input id="wetness" type="range" min="0" max="1" step=".01" value="0" /><label>ROUGHNESS MAP <output id="roughness-map-value">1.00</output></label><input id="roughness-map" type="range" min="0" max="2" step=".05" value="1" /></section>
         <section><div class="section-title"><span>STAGE</span></div><label class="check"><input id="grid" type="checkbox" checked> Grid floor</label><label class="check"><input id="shadows" type="checkbox" checked> Soft shadows</label></section>
       </div>
-      <footer><span id="notice">READY — LOCAL MODE</span><span id="build-version">v2.0.0</span></footer>
+      <footer><span id="notice">READY — LOCAL MODE</span><span id="build-version">v2.1.0</span></footer>
     </aside>
   </main>
   <div id="toast"></div>
   <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}</script>
-  <script type="module" src="./app.js?v=render-layer-rebuild-1"></script>
+  <script type="module" src="./app.js?v=zip-texture-bundle-1"></script>
 </body>
 </html>

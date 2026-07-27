@@ -7,7 +7,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const BUILD_VERSION = 'v2.0.0';
+const BUILD_VERSION = 'v2.1.0';
 $('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: false, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, physicsSettings: { stiffness: .5, damping: .2, gravity: 1, wind: 0, turbulence: 0, parts: { hair: true, cloth: true, body: true } }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const clock = new THREE.Clock(), scene = new THREE.Scene(), canvas = $('#scene');
@@ -47,7 +47,9 @@ function renderLibraries() { const draw = (kind, target, count, message, action)
   draw('model', '#model-library', '#model-library-count', 'モデルを追加すると<br/>ここから再読み込みできます', loadAssetModel);
   draw('motion', '#motion-library', '#motion-library-count', 'モーションを追加すると<br/>ここから適用できます', applyAssetMotion);
 }
-async function importAssets(files, loadImmediately = false) { const saved = []; for (const file of [...files]) { const suffix = ext(file); const kind = ['pmx', 'pmd'].includes(suffix) ? 'model' : ['vmd', 'vpd'].includes(suffix) ? 'motion' : ['png', 'jpg', 'jpeg', 'bmp', 'tga', 'dds', 'webp'].includes(suffix) ? 'texture' : null; if (!kind) continue; const id = await saveAsset(file, kind, file.webkitRelativePath || ''); saved.push({ id, kind, name: file.name, path: file.webkitRelativePath || '', file }); } await refreshAssets(); if (loadImmediately) { for (const asset of saved.filter(x => x.kind === 'model')) await loadModel(asset.file); for (const asset of saved.filter(x => x.kind === 'motion')) await applyMotion(asset.file); } return saved; }
+function mimeFor(name) { const suffix = ext({ name }); return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', bmp: 'image/bmp', spa: 'image/bmp', sph: 'image/bmp', tga: 'image/x-tga', dds: 'image/vnd-ms.dds', webp: 'image/webp' })[suffix] || ''; }
+async function expandArchives(files) { const expanded = []; for (const file of [...files]) { if (ext(file) !== 'zip') { expanded.push(file); continue; } const { unzipSync } = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js'); const entries = unzipSync(new Uint8Array(await file.arrayBuffer())); for (const [path, data] of Object.entries(entries)) { if (!data.length || path.endsWith('/')) continue; const name = path.split('/').pop(); const entry = new File([data], name, { type: mimeFor(name) }); Object.defineProperty(entry, 'webkitRelativePath', { value: path }); expanded.push(entry); } } return expanded; }
+async function importAssets(files, loadImmediately = false) { const saved = []; const expanded = await expandArchives(files); for (const file of expanded) { const suffix = ext(file); const kind = ['pmx', 'pmd'].includes(suffix) ? 'model' : ['vmd', 'vpd'].includes(suffix) ? 'motion' : ['png', 'jpg', 'jpeg', 'bmp', 'tga', 'dds', 'webp', 'spa', 'sph'].includes(suffix) ? 'texture' : null; if (!kind) continue; const id = await saveAsset(file, kind, file.webkitRelativePath || ''); saved.push({ id, kind, name: file.name, path: file.webkitRelativePath || '', file }); } await refreshAssets(); if (loadImmediately) { for (const asset of saved.filter(x => x.kind === 'model')) await loadModel(asset.file); for (const asset of saved.filter(x => x.kind === 'motion')) await applyMotion(asset.file); } return saved; }
 async function loadAssetModel(asset) { await loadModel(asset.file); }
 async function applyAssetMotion(asset) { await applyMotion(asset.file); }
 
