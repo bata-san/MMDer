@@ -1,1 +1,2 @@
 Trigger temporary Cloudflare deployment for the MMD WebGPU/WASM viewer.
+Runtime fallback patch revision 2.
