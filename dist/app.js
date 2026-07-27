@@ -68,8 +68,11 @@ async function loadVerifiedApplication() {
   const archive = await decompressGzip(decodeBase64(chunks.join('')));
   const files = parseTar(archive);
   const overlays = new Map();
-  for (const [path, source] of files) {
+  for (const [path, originalSource] of files) {
     if (!path.startsWith('dist/') || !path.endsWith('.js')) continue;
+    const source = path === 'dist/state.js'
+      ? originalSource.replace("BUILD_VERSION = 'v4.2.0'", "BUILD_VERSION = 'v4.3.0'")
+      : originalSource;
     overlays.set(new URL(`../${path}`, import.meta.url).href, source);
   }
 
