@@ -6,7 +6,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const BUILD_VERSION = 'v2.6.0';
+const BUILD_VERSION = 'v2.6.1';
 $('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: true, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, physicsSettings: { stiffness: .5, damping: .2, gravity: 1, wind: 0, turbulence: 0, quality: 3, air: .25, parts: { hair: true, cloth: true, body: true } }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const renderRatio = () => Math.min(devicePixelRatio, 2);
