@@ -1,0 +1,13 @@
+{
+  "name": "mmd-webgpu-wasm-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "bash build-cloudflare.sh",
+    "build": "bash build-cloudflare.sh",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.114.0"
+  }
+}
