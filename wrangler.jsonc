@@ -1,0 +1,6 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mmd-lab-viewer",
+  "compatibility_date": "2026-07-27",
+  "assets": { "directory": "." }
+}
