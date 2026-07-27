@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DDSLoader } from 'three/addons/loaders/DDSLoader.js';
-import { initCore } from '@yohawing/three-mmd-loader/parser';
+import { initCore, parseVmdSectionInventory } from '@yohawing/three-mmd-loader/parser';
+import { sampleMmdCameraTrack, sampleMmdLightTrack } from '@yohawing/three-mmd-loader/runtime';
 import {
   ThreeMmdLoader,
   applyMmdCameraStateToThreeCamera,
+  applyMmdLightStateToThreeDirectionalLight,
   createMmdTextureMapFromFiles,
   disposeMmdModel,
   findMmdModelFiles,
@@ -14,17 +16,53 @@ import {
 
 const MMD_FPS = 30;
 const $ = (id) => document.getElementById(id);
+
 const ui = {
-  canvas: $('viewport'), dropZone: $('dropZone'), openFiles: $('openFiles'), openFolder: $('openFolder'), resetCamera: $('resetCamera'),
-  fileInput: $('fileInput'), folderInput: $('folderInput'), play: $('playButton'), timeline: $('timeline'), time: $('timeLabel'),
-  edge: $('edgeToggle'), camera: $('cameraToggle'), loop: $('loopToggle'), scale: $('scaleSelect'), modelName: $('modelName'),
-  stats: $('modelStats'), fps: $('fps'), frame: $('frameLabel'), status: $('status'),
+  canvas: $('viewport'),
+  dropZone: $('dropZone'),
+  openFiles: $('openFiles'),
+  openFolder: $('openFolder'),
+  resetCamera: $('resetCamera'),
+  fileInput: $('fileInput'),
+  folderInput: $('folderInput'),
+  play: $('playButton'),
+  timeline: $('timeline'),
+  time: $('timeLabel'),
+  edge: $('edgeToggle'),
+  camera: $('cameraToggle'),
+  loop: $('loopToggle'),
+  scale: $('scaleSelect'),
+  modelName: $('modelName'),
+  stats: $('modelStats'),
+  fps: $('fps'),
+  frame: $('frameLabel'),
+  status: $('status'),
 };
+
 const state = {
-  renderer: null, scene: null, controls: null, manualCamera: null, vmdCamera: null, activeCamera: null, keyLight: null,
-  model: null, animation: null, animationLoader: null, corePromise: null, audio: null, audioUrl: null,
-  timeSeconds: 0, maxSeconds: 0.001, playing: false, lastNow: performance.now(), loading: false, renderScale: 1,
-  fpsFrames: 0, fpsStart: performance.now(),
+  renderer: null,
+  scene: null,
+  controls: null,
+  manualCamera: null,
+  vmdCamera: null,
+  activeCamera: null,
+  keyLight: null,
+  model: null,
+  animation: null,
+  cameraAnimation: null,
+  lightAnimation: null,
+  animationLoader: null,
+  corePromise: null,
+  audio: null,
+  audioUrl: null,
+  timeSeconds: 0,
+  maxSeconds: 0.001,
+  playing: false,
+  lastNow: performance.now(),
+  loading: false,
+  renderScale: 1,
+  fpsFrames: 0,
+  fpsStart: performance.now(),
 };
 
 boot().catch((error) => {
@@ -37,7 +75,12 @@ async function boot() {
   setFileControlsEnabled(false);
   setStatus('Three.js と MMD ランタイムを初期化しています。');
 
-  const renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+  const renderer = new THREE.WebGLRenderer({
+    canvas: ui.canvas,
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance',
+  });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
   renderer.shadowMap.enabled = true;
@@ -69,7 +112,9 @@ async function boot() {
   controls.update();
   state.controls = controls;
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x687184, 1.7));
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x687184, 1.7);
+  scene.add(hemi);
+
   const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
   keyLight.position.set(8, 18, 10);
   keyLight.castShadow = true;
@@ -79,14 +124,21 @@ async function boot() {
   scene.add(keyLight, keyLight.target);
   state.keyLight = keyLight;
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.ShadowMaterial({ color: 0x111827, opacity: 0.14 }));
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.ShadowMaterial({ color: 0x111827, opacity: 0.14 }),
+  );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.02;
   ground.receiveShadow = true;
+  ground.name = 'ground-shadow';
   scene.add(ground);
 
-  state.corePromise = initCore({ wasmUrl: new URL('./mmd_anim_wasm_bg.wasm', import.meta.url) });
+  state.corePromise = initCore({
+    wasmUrl: new URL('./mmd_anim_wasm_bg.wasm', import.meta.url),
+  });
   await state.corePromise;
+
   resize();
   setFileControlsEnabled(true);
   setStatus('準備完了。モデルのフォルダーを選択してください。');
@@ -96,18 +148,25 @@ async function boot() {
 function bindUi() {
   ui.openFiles.addEventListener('click', () => ui.fileInput.click());
   ui.openFolder.addEventListener('click', () => ui.folderInput.click());
-  ui.resetCamera.addEventListener('click', frameModel);
+  ui.resetCamera?.addEventListener('click', frameModel);
   ui.fileInput.addEventListener('change', () => loadFiles([...ui.fileInput.files]));
   ui.folderInput.addEventListener('change', () => loadFiles([...ui.folderInput.files]));
   ui.play.addEventListener('click', togglePlayback);
   ui.timeline.addEventListener('input', () => seek(Number(ui.timeline.value)));
   ui.edge.addEventListener('change', updateOutlineVisibility);
   ui.camera.addEventListener('change', updateCameraMode);
-  ui.scale.addEventListener('change', () => { state.renderScale = Number(ui.scale.value) || 1; resize(); });
+  ui.scale.addEventListener('change', () => {
+    state.renderScale = Number(ui.scale.value) || 1;
+    resize();
+  });
   addEventListener('resize', resize);
 
   let dragDepth = 0;
-  addEventListener('dragenter', (event) => { event.preventDefault(); dragDepth += 1; document.body.classList.add('dragging'); });
+  addEventListener('dragenter', (event) => {
+    event.preventDefault();
+    dragDepth += 1;
+    document.body.classList.add('dragging');
+  });
   addEventListener('dragover', (event) => event.preventDefault());
   addEventListener('dragleave', (event) => {
     event.preventDefault();
@@ -128,18 +187,22 @@ async function loadFiles(files) {
   pause();
   setFileControlsEnabled(false);
   setStatus('モデルとテクスチャを読み込んでいます。');
+
   try {
-    const modelFile = findMmdModelFiles(files)[0];
+    const modelFiles = findMmdModelFiles(files);
+    const modelFile = modelFiles[0];
     if (!modelFile) throw new Error('PMX または PMD が見つかりません。モデルのフォルダーごと選択してください。');
 
     clearCurrentModel();
+    const textureMap = createMmdTextureMapFromFiles(files, modelFile);
     const loader = new ThreeMmdLoader({
-      textureMap: createMmdTextureMapFromFiles(files, modelFile),
+      textureMap,
       ddsLoader: new DDSLoader(),
       core: state.corePromise,
       geometryAwareAlpha: true,
     });
     state.animationLoader = loader;
+
     const model = await loader.loadModel(modelFile, {
       outline: true,
       materialRenderOrder: true,
@@ -149,6 +212,7 @@ async function loadFiles(files) {
     });
     state.model = model;
     state.scene.add(model.root);
+
     model.root.traverse((object) => {
       if (!object.isMesh) return;
       object.castShadow = true;
@@ -156,15 +220,32 @@ async function loadFiles(files) {
     });
     syncMmdSpecularDirection(model.mesh.material, state.keyLight);
 
-    const motionFile = findMmdMotionFiles(files)[0] ?? null;
+    const vmdFiles = findMmdMotionFiles(files);
+    const { modelMotionFile, cameraMotionFile } = await classifyVmdFiles(vmdFiles);
     state.animation = null;
+    state.cameraAnimation = null;
+    state.lightAnimation = null;
     state.timeSeconds = 0;
     state.maxSeconds = 0.001;
-    if (motionFile) {
-      const loaded = await loader.loadAnimation(motionFile);
-      state.animation = loaded.animation;
-      model.setAnimation(loaded.animation);
-      state.maxSeconds = Math.max((loaded.animation.metadata?.maxFrame ?? 0) / MMD_FPS, 0.001);
+
+    let modelLoaded = null;
+    if (modelMotionFile) {
+      modelLoaded = await loader.loadAnimation(modelMotionFile);
+      state.animation = modelLoaded.animation;
+      model.setAnimation(modelLoaded.animation);
+      state.maxSeconds = Math.max(state.maxSeconds, animationDuration(modelLoaded.animation));
+    }
+
+    if (cameraMotionFile) {
+      const cameraLoaded = cameraMotionFile === modelMotionFile
+        ? modelLoaded
+        : await loader.loadAnimation(cameraMotionFile);
+      state.cameraAnimation = cameraLoaded?.animation ?? null;
+      state.lightAnimation = cameraLoaded?.animation ?? null;
+      state.maxSeconds = Math.max(state.maxSeconds, animationDuration(cameraLoaded?.animation));
+    } else if (modelLoaded?.animation?.cameraFrames?.length) {
+      state.cameraAnimation = modelLoaded.animation;
+      state.lightAnimation = modelLoaded.animation;
     }
 
     replaceAudio(findAudioFile(files));
@@ -174,8 +255,12 @@ async function loadFiles(files) {
     frameModel();
     updateTimelineRange();
     seek(0);
-    const motionStatus = motionFile ? 'VMDのボーン・カメラ・ライト・モーフを読み込みました。' : 'VMDなし。';
-    setStatus(`${motionStatus} Three.js MMDマテリアルで描画しています。`);
+
+    const textureFailures = model.diagnostics?.textures?.filter((item) => item.status === 'error').length ?? 0;
+    const motionStatus = modelMotionFile ? 'VMDボーン・モーフを読み込みました。' : 'モデル用VMDなし。';
+    const cameraStatus = cameraMotionFile ? ' VMDカメラ・ライトを読み込みました。' : '';
+    const textureStatus = textureFailures ? ` テクスチャ失敗 ${textureFailures} 件。` : '';
+    setStatus(`${motionStatus}${cameraStatus} Three.js MMDマテリアルで描画しています。${textureStatus}`);
   } catch (error) {
     console.error(error);
     setStatus(`ロード失敗: ${describeError(error)}`);
@@ -185,6 +270,26 @@ async function loadFiles(files) {
   }
 }
 
+async function classifyVmdFiles(files) {
+  let modelMotionFile = null;
+  let cameraMotionFile = null;
+  for (const file of files) {
+    try {
+      const inventory = parseVmdSectionInventory(new Uint8Array(await file.arrayBuffer()));
+      const counts = inventory.counts ?? {};
+      if (!modelMotionFile && ((counts.bones ?? 0) > 0 || (counts.morphs ?? 0) > 0)) modelMotionFile = file;
+      if (!cameraMotionFile && (counts.cameras ?? 0) > 0) cameraMotionFile = file;
+    } catch (error) {
+      console.warn(`VMD分類をスキップ: ${file.name}`, error);
+    }
+  }
+  return { modelMotionFile, cameraMotionFile };
+}
+
+function animationDuration(animation) {
+  return Math.max((animation?.metadata?.maxFrame ?? 0) / MMD_FPS, 0.001);
+}
+
 function clearCurrentModel() {
   if (state.model) {
     state.scene.remove(state.model.root);
@@ -192,6 +297,8 @@ function clearCurrentModel() {
   }
   state.model = null;
   state.animation = null;
+  state.cameraAnimation = null;
+  state.lightAnimation = null;
   state.animationLoader = null;
   state.timeSeconds = 0;
   state.maxSeconds = 0.001;
@@ -201,6 +308,7 @@ function frameModel() {
   if (!state.model) return;
   state.model.update(state.timeSeconds);
   state.model.root.updateMatrixWorld(true);
+
   const box = new THREE.Box3().setFromObject(state.model.root);
   if (box.isEmpty()) return;
   const size = box.getSize(new THREE.Vector3());
@@ -208,12 +316,10 @@ function frameModel() {
   const camera = state.manualCamera;
   const verticalFov = THREE.MathUtils.degToRad(camera.fov);
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(camera.aspect, 0.1));
-  const distance = Math.max(
-    size.y / (2 * Math.tan(verticalFov / 2)),
-    size.x / (2 * Math.tan(horizontalFov / 2)),
-    size.z,
-    1,
-  ) * 1.25;
+  const distanceV = size.y / (2 * Math.tan(verticalFov / 2));
+  const distanceH = size.x / (2 * Math.tan(horizontalFov / 2));
+  const distance = Math.max(distanceV, distanceH, size.z, 1) * 1.25;
+
   state.controls.target.copy(center);
   camera.position.copy(center).add(new THREE.Vector3(0, size.y * 0.04, distance));
   camera.near = Math.max(distance / 1000, 0.01);
@@ -225,8 +331,9 @@ function frameModel() {
 }
 
 function updateCameraMode() {
-  const hasVmdCamera = Boolean(state.model?.runtime?.cameraState?.());
+  const hasVmdCamera = Boolean(state.cameraAnimation?.cameraFrames?.length || state.model?.runtime?.cameraState?.());
   state.controls.enabled = !ui.camera.checked || !hasVmdCamera;
+  if (!state.controls.enabled) state.controls.update();
 }
 
 function updateOutlineVisibility() {
@@ -237,9 +344,12 @@ function loop(now) {
   requestAnimationFrame(loop);
   const delta = Math.min((now - state.lastNow) / 1000, 0.1);
   state.lastNow = now;
+
   if (state.model && !state.loading) {
     if (state.playing) {
-      state.timeSeconds = state.audio && !state.audio.error ? state.audio.currentTime : state.timeSeconds + delta;
+      state.timeSeconds = state.audio && !state.audio.error
+        ? state.audio.currentTime
+        : state.timeSeconds + delta;
       if (state.timeSeconds >= state.maxSeconds) {
         if (ui.loop.checked) {
           state.timeSeconds %= state.maxSeconds;
@@ -255,20 +365,33 @@ function loop(now) {
     }
 
     state.model.update(state.timeSeconds);
-    const cameraState = state.model.runtime?.cameraState?.();
+    const frame = state.timeSeconds * MMD_FPS;
+    const cameraState = state.cameraAnimation?.cameraFrames?.length
+      ? sampleMmdCameraTrack(state.cameraAnimation.cameraFrames, frame)
+      : state.model.runtime?.cameraState?.();
+    const lightState = state.lightAnimation?.lightFrames?.length
+      ? sampleMmdLightTrack(state.lightAnimation.lightFrames, frame)
+      : state.model.runtime?.lightState?.();
+    if (lightState) applyMmdLightStateToThreeDirectionalLight(state.keyLight, lightState);
     const useVmdCamera = Boolean(ui.camera.checked && cameraState);
     state.controls.enabled = !useVmdCamera;
+
     if (useVmdCamera) {
-      state.activeCamera = applyMmdCameraStateToThreeCamera(state.vmdCamera, cameraState, { aspect: viewportAspect() });
+      state.activeCamera = applyMmdCameraStateToThreeCamera(state.vmdCamera, cameraState, {
+        aspect: viewportAspect(),
+      });
     } else {
       state.controls.update(delta);
       state.activeCamera = state.manualCamera;
     }
+
     state.renderer.render(state.scene, state.activeCamera);
     updateTimeUi();
   } else {
     state.controls?.update(delta);
-    if (state.renderer && state.scene && state.manualCamera) state.renderer.render(state.scene, state.manualCamera);
+    if (state.renderer && state.scene && state.manualCamera) {
+      state.renderer.render(state.scene, state.manualCamera);
+    }
   }
 
   state.fpsFrames += 1;
@@ -281,18 +404,32 @@ function loop(now) {
 
 function togglePlayback() {
   if (!state.model || state.maxSeconds <= 0.001) return;
-  if (state.playing) return pause();
+  if (state.playing) {
+    pause();
+    return;
+  }
   state.playing = true;
   ui.play.textContent = 'Ⅱ';
   if (state.audio) {
     state.audio.currentTime = Math.min(state.timeSeconds, state.audio.duration || state.timeSeconds);
-    state.audio.play().catch((error) => { console.warn(error); state.audio = null; });
+    state.audio.play().catch((error) => {
+      console.warn(error);
+      state.audio = null;
+    });
   }
 }
-function pause() { state.playing = false; state.audio?.pause(); ui.play.textContent = '▶'; }
+
+function pause() {
+  state.playing = false;
+  state.audio?.pause();
+  ui.play.textContent = '▶';
+}
+
 function seek(seconds) {
   state.timeSeconds = Math.max(0, Math.min(state.maxSeconds, seconds));
-  if (state.audio && Number.isFinite(state.audio.duration)) state.audio.currentTime = Math.min(state.timeSeconds, state.audio.duration);
+  if (state.audio && Number.isFinite(state.audio.duration)) {
+    state.audio.currentTime = Math.min(state.timeSeconds, state.audio.duration);
+  }
   state.model?.update(state.timeSeconds);
   updateTimeUi();
 }
@@ -303,6 +440,7 @@ function replaceAudio(file) {
   state.audio = null;
   state.audioUrl = null;
   if (!file) return;
+
   state.audioUrl = URL.createObjectURL(file);
   state.audio = new Audio(state.audioUrl);
   state.audio.preload = 'auto';
@@ -314,13 +452,21 @@ function replaceAudio(file) {
     }
   }, { once: true });
 }
-function findAudioFile(files) { return files.find((file) => /\.(?:mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name)) ?? null; }
-function updateTimelineRange() { ui.timeline.max = String(Math.max(state.maxSeconds, 0.001)); }
+
+function findAudioFile(files) {
+  return files.find((file) => /\.(?:mp3|wav|ogg|m4a|aac|flac)$/i.test(file.name)) ?? null;
+}
+
+function updateTimelineRange() {
+  ui.timeline.max = String(Math.max(state.maxSeconds, 0.001));
+}
+
 function updateTimeUi() {
   ui.timeline.value = String(state.timeSeconds);
   ui.frame.textContent = (state.timeSeconds * MMD_FPS).toFixed(1);
   ui.time.textContent = `${formatTime(state.timeSeconds)} / ${formatTime(state.maxSeconds)}`;
 }
+
 function updateModelUi(modelFile, model) {
   const metadata = model.mesh.userData?.mmdModel?.metadata ?? {};
   ui.modelName.textContent = metadata.name || metadata.modelName || modelFile.name;
@@ -330,27 +476,39 @@ function updateModelUi(modelFile, model) {
     model.mesh.geometry.morphAttributes?.position?.length ?? 0,
     metadata.rigidBodies?.length ?? metadata.counts?.rigidBodies ?? 0,
   ];
-  [...ui.stats.querySelectorAll('dd')].forEach((dd, index) => { dd.textContent = Number(values[index] ?? 0).toLocaleString(); });
+  [...ui.stats.querySelectorAll('dd')].forEach((dd, index) => {
+    dd.textContent = Number(values[index] ?? 0).toLocaleString();
+  });
 }
+
 function resize() {
   if (!state.renderer || !state.manualCamera) return;
   const width = Math.max(ui.canvas.clientWidth, 1);
   const height = Math.max(ui.canvas.clientHeight, 1);
-  state.renderer.setPixelRatio(Math.min(devicePixelRatio * state.renderScale, 2.5));
+  const pixelRatio = Math.min(devicePixelRatio * state.renderScale, 2.5);
+  state.renderer.setPixelRatio(pixelRatio);
   state.renderer.setSize(width, height, false);
   state.manualCamera.aspect = width / height;
   state.manualCamera.updateProjectionMatrix();
   state.vmdCamera.aspect = width / height;
   state.vmdCamera.updateProjectionMatrix();
 }
-function viewportAspect() { return Math.max(ui.canvas.clientWidth, 1) / Math.max(ui.canvas.clientHeight, 1); }
+
+function viewportAspect() {
+  return Math.max(ui.canvas.clientWidth, 1) / Math.max(ui.canvas.clientHeight, 1);
+}
+
 function setFileControlsEnabled(enabled) {
   ui.openFiles.disabled = !enabled;
   ui.openFolder.disabled = !enabled;
   ui.fileInput.disabled = !enabled;
   ui.folderInput.disabled = !enabled;
 }
-function setStatus(text) { ui.status.textContent = text; }
+
+function setStatus(text) {
+  ui.status.textContent = text;
+}
+
 function describeError(error) {
   if (error instanceof Error) {
     const cause = error.cause instanceof Error ? ` / ${error.cause.message}` : '';
@@ -358,12 +516,14 @@ function describeError(error) {
   }
   return String(error);
 }
+
 function formatTime(seconds) {
   if (!Number.isFinite(seconds)) return '0:00.00';
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds - minutes * 60;
   return `${minutes}:${remainder.toFixed(2).padStart(5, '0')}`;
 }
+
 async function filesFromDrop(dataTransfer) {
   const out = [];
   const items = [...(dataTransfer?.items ?? [])];
@@ -378,10 +538,14 @@ async function filesFromDrop(dataTransfer) {
   }
   return out;
 }
+
 async function walkEntry(entry, prefix, out) {
   if (entry.isFile) {
     const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-    Object.defineProperty(file, 'relativePath', { value: `${prefix}${file.name}`, configurable: true });
+    Object.defineProperty(file, 'relativePath', {
+      value: `${prefix}${file.name}`,
+      configurable: true,
+    });
     out.push(file);
     return;
   }
