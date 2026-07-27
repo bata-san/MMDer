@@ -9,6 +9,23 @@ const PROFILES = [
     { fixedStep: 1 / 90, maxSubSteps: 4, warmupSteps: 8 },
     { fixedStep: 1 / 120, maxSubSteps: 5, warmupSteps: 10 },
 ];
+export const PHYSICS_PARTS = [
+    'hairFront', 'hairBack', 'hairSide', 'skirt', 'cloth', 'accessory',
+    'chest', 'torso', 'hips', 'arms', 'legs',
+];
+export const PHYSICS_PART_LABELS = {
+    hairFront: '前髪',
+    hairBack: '後髪・長髪',
+    hairSide: '横髪・ツインテール',
+    skirt: 'スカート',
+    cloth: '衣装・袖・裾',
+    accessory: 'リボン・アクセサリ',
+    chest: '胸部',
+    torso: '胴体',
+    hips: '腰・骨盤',
+    arms: '腕・手',
+    legs: '脚',
+};
 function profile() {
     const selected = PROFILES[Math.max(0, Math.min(PROFILES.length - 1, state.physicsSettings.quality - 1))];
     if (!state.xrPresenting)
@@ -19,14 +36,34 @@ function profile() {
         warmupSteps: Math.min(selected.warmupSteps, 6),
     };
 }
-function partForBody(wrapper, item) {
+export function partForBody(wrapper, item) {
     const bone = item.mesh.skeleton?.bones?.[wrapper.params?.boneIndex];
     const name = `${wrapper.params?.name || ''} ${bone?.name || ''}`.toLowerCase();
-    if (/hair|髪|前髪|後髪|ツインテ|ponytail/.test(name))
-        return 'hair';
-    if (/skirt|cloth|ribbon|dress|coat|袖|スカート|リボン|衣|裾/.test(name))
+    if (/前髪|bang|fringe/.test(name))
+        return 'hairFront';
+    if (/後髪|ponytail|long.?hair|back.?hair/.test(name))
+        return 'hairBack';
+    if (/横髪|ツインテ|side.?hair|twin.?tail/.test(name))
+        return 'hairSide';
+    if (/skirt|スカート/.test(name))
+        return 'skirt';
+    if (/胸|bust|breast|chest.?soft/.test(name))
+        return 'chest';
+    if (/腰|骨盤|hip|pelvis|lower.?body/.test(name))
+        return 'hips';
+    if (/腕|ひじ|肘|手|arm|elbow|hand/.test(name))
+        return 'arms';
+    if (/脚|足|膝|leg|knee|ankle/.test(name))
+        return 'legs';
+    if (/上半身|胴|torso|spine|body/.test(name))
+        return 'torso';
+    if (/ribbon|リボン|tie|ネクタイ|chain|鎖|accessory|アクセ/.test(name))
+        return 'accessory';
+    if (/cloth|dress|coat|袖|裾|衣|服|cape/.test(name))
         return 'cloth';
-    return 'body';
+    if (/hair|髪/.test(name))
+        return 'hairBack';
+    return 'accessory';
 }
 function configureConstraint(wrapper, stiffness) {
     const constraint = wrapper?.constraint;
@@ -39,8 +76,20 @@ function configureConstraint(wrapper, stiffness) {
         constraint.setParam(3, cfm, -1);
     }
     catch {
-        // Ammo builds differ; damping still provides a safe fallback.
+        // Ammo builds differ. Body damping remains the portable fallback.
     }
+}
+function bodyPosition(wrapper) {
+    const body = wrapper?.body;
+    const transform = body?.getWorldTransform?.();
+    const origin = transform?.getOrigin?.();
+    if (!origin)
+        return null;
+    return new THREE.Vector3(origin.x(), origin.y(), origin.z());
+}
+function bodyMass(body) {
+    const invMass = Number(body?.getInvMass?.() ?? 0);
+    return invMass > 0 ? 1 / invMass : 0;
 }
 export function applyPhysicsSettings(item = state.active) {
     const runtime = item?.physics;
@@ -58,19 +107,22 @@ export function applyPhysicsSettings(item = state.active) {
         const body = wrapper.body;
         if (!body)
             return;
-        const enabled = parts[partForBody(wrapper, item)];
-        if (!enabled) {
+        const part = partForBody(wrapper, item);
+        const tuning = parts[part];
+        if (!tuning.enabled) {
             body.clearForces?.();
-            body.setDamping?.(0.99, 0.99);
+            body.setDamping?.(0.995, 0.995);
             body.setActivationState?.(5);
             return;
         }
-        const linear = Math.min(0.95, 0.04 + damping * 0.62 + air * 0.26);
-        const angular = Math.min(0.97, 0.08 + damping * 0.72 + air * 0.34);
+        const partDamping = THREE.MathUtils.clamp(tuning.damping, 0, 1);
+        const response = THREE.MathUtils.clamp(tuning.response, 0, 1.5);
+        const linear = Math.min(0.97, 0.035 + damping * 0.52 + air * 0.22 + partDamping * 0.22);
+        const angular = Math.min(0.985, 0.07 + damping * 0.62 + air * 0.3 + partDamping * 0.2);
         body.setDamping?.(linear, angular);
-        body.setFriction?.(0.24 + stiffness * 0.44);
+        body.setFriction?.(0.2 + stiffness * 0.32 + (1 - response) * 0.14);
         body.setRestitution?.(0);
-        body.setSleepingThresholds?.(0.04, 0.08);
+        body.setSleepingThresholds?.(0.025, 0.05);
         body.setActivationState?.(4);
         body.activate?.(true);
     });
@@ -131,34 +183,120 @@ export function resetAllPhysics() {
     state.models.forEach((item) => resetPhysics(item));
     toast('物理状態をリセットしました');
 }
-function applyAerodynamics(item, time) {
+function applyForces(item, time) {
     const runtime = item.physics;
     const Ammo = window.Ammo;
     if (!runtime?.engine?.bodies || !Ammo)
         return;
-    const { wind, turbulence, air, parts } = state.physicsSettings;
-    if (!wind && !turbulence && !air)
-        return;
+    const { wind, turbulence, air, gravity, parts } = state.physicsSettings;
     runtime.engine.bodies.forEach((wrapper, index) => {
         const part = partForBody(wrapper, item);
-        if (!parts[part] || part === 'body')
+        const tuning = parts[part];
+        if (!tuning.enabled)
             return;
         const body = wrapper.body;
         if (!body)
             return;
+        const mass = bodyMass(body);
+        if (mass <= 0)
+            return;
         const phase = time * 1.7 + index * 0.618;
-        const gust = wind * (1 + Math.sin(phase) * turbulence * 0.55);
-        const lateral = Math.cos(time * 0.83 + index * 0.37) * wind * turbulence * 0.32;
-        const vertical = Math.sin(time * 2.31 + index) * wind * turbulence * 0.12;
-        const partScale = part === 'hair' ? 1 : 0.72;
+        const partWind = wind * tuning.wind;
+        const gust = partWind * (1 + Math.sin(phase) * turbulence * 0.55);
+        const lateral = Math.cos(time * 0.83 + index * 0.37) * partWind * turbulence * 0.32;
+        const vertical = Math.sin(time * 2.31 + index) * partWind * turbulence * 0.12;
         const velocity = body.getLinearVelocity?.();
-        const dragX = velocity ? -velocity.x() * air * 0.12 : 0;
-        const dragY = velocity ? -velocity.y() * air * 0.08 : 0;
-        const dragZ = velocity ? -velocity.z() * air * 0.12 : 0;
-        const force = new Ammo.btVector3((gust + dragX) * partScale, (vertical + dragY) * partScale, (lateral + dragZ) * partScale);
+        const response = THREE.MathUtils.clamp(tuning.response, 0, 1.5);
+        const dragX = velocity ? -velocity.x() * air * (0.08 + response * 0.06) * mass : 0;
+        const dragY = velocity ? -velocity.y() * air * (0.05 + response * 0.04) * mass : 0;
+        const dragZ = velocity ? -velocity.z() * air * (0.08 + response * 0.06) * mass : 0;
+        const gravityCorrection = -98 * gravity * (tuning.gravity - 1) * mass;
+        const force = new Ammo.btVector3((gust + dragX) * response, (vertical + dragY + gravityCorrection) * response, (lateral + dragZ) * response);
         body.applyCentralForce?.(force);
         Ammo.destroy(force);
     });
+}
+export function findNearestPhysicsBody(item, point, radius) {
+    const bodies = item.physics?.engine?.bodies;
+    if (!bodies)
+        return null;
+    let nearest = null;
+    bodies.forEach((wrapper) => {
+        const body = wrapper.body;
+        if (!body || bodyMass(body) <= 0)
+            return;
+        const part = partForBody(wrapper, item);
+        if (!state.physicsSettings.parts[part].enabled)
+            return;
+        const position = bodyPosition(wrapper);
+        if (!position)
+            return;
+        const distance = position.distanceTo(point);
+        if (distance > radius || (nearest && distance >= nearest.distance))
+            return;
+        nearest = { model: item, wrapper, part, position, distance };
+    });
+    return nearest;
+}
+export function pokePhysics(item, point, direction, strength, radius) {
+    const bodies = item.physics?.engine?.bodies;
+    const Ammo = window.Ammo;
+    if (!bodies || !Ammo)
+        return 0;
+    let affected = 0;
+    bodies.forEach((wrapper) => {
+        const body = wrapper.body;
+        if (!body || bodyMass(body) <= 0)
+            return;
+        const part = partForBody(wrapper, item);
+        const tuning = state.physicsSettings.parts[part];
+        if (!tuning.enabled)
+            return;
+        const position = bodyPosition(wrapper);
+        if (!position)
+            return;
+        const distance = position.distanceTo(point);
+        if (distance > radius)
+            return;
+        const falloff = 1 - distance / Math.max(0.001, radius);
+        const impulseAmount = strength * falloff * (0.45 + tuning.response * 0.7);
+        const impulse = new Ammo.btVector3(direction.x * impulseAmount, direction.y * impulseAmount, direction.z * impulseAmount);
+        body.activate?.(true);
+        body.applyCentralImpulse?.(impulse);
+        Ammo.destroy(impulse);
+        affected += 1;
+    });
+    return affected;
+}
+export function beginPhysicsPull(item, point, radius) {
+    const hit = findNearestPhysicsBody(item, point, radius);
+    if (!hit)
+        return null;
+    return { ...hit, localOffset: point.clone().sub(hit.position) };
+}
+export function updatePhysicsPull(handle, target, delta) {
+    const Ammo = window.Ammo;
+    const body = handle.wrapper?.body;
+    if (!Ammo || !body)
+        return;
+    const position = bodyPosition(handle.wrapper);
+    if (!position)
+        return;
+    const desired = target.clone().sub(handle.localOffset);
+    const error = desired.sub(position);
+    const velocity = body.getLinearVelocity?.();
+    const settings = state.interactionSettings;
+    const tuning = state.physicsSettings.parts[handle.part];
+    const forceScale = settings.pullStrength * (0.4 + tuning.response * 0.8);
+    const damping = settings.pullDamping;
+    const force = new THREE.Vector3(error.x * forceScale - (velocity?.x?.() ?? 0) * damping, error.y * forceScale - (velocity?.y?.() ?? 0) * damping, error.z * forceScale - (velocity?.z?.() ?? 0) * damping);
+    const maxForce = 85 * Math.max(0.5, delta * 60);
+    if (force.length() > maxForce)
+        force.setLength(maxForce);
+    const ammoForce = new Ammo.btVector3(force.x, force.y, force.z);
+    body.activate?.(true);
+    body.applyCentralForce?.(ammoForce);
+    Ammo.destroy(ammoForce);
 }
 export function stepPhysics(item, delta, time) {
     const runtime = item.physics;
@@ -167,7 +305,7 @@ export function stepPhysics(item, delta, time) {
     runtime.accumulator = Math.min(runtime.accumulator + Math.min(delta, 0.05), runtime.fixedStep * runtime.maxSubSteps);
     let steps = 0;
     while (runtime.accumulator >= runtime.fixedStep && steps < runtime.maxSubSteps) {
-        applyAerodynamics(item, time + steps * runtime.fixedStep);
+        applyForces(item, time + steps * runtime.fixedStep);
         runtime.engine.update(runtime.fixedStep);
         runtime.accumulator -= runtime.fixedStep;
         steps += 1;

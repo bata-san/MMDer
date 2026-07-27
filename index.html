@@ -7,6 +7,7 @@
   <title>MMD LAB — realtime viewer</title>
   <link rel="stylesheet" href="./style.css" />
   <link rel="stylesheet" href="./compact-library.css" />
+  <link rel="stylesheet" href="./ui-v42.css" />
 </head>
 <body>
   <canvas id="scene"></canvas>
@@ -18,40 +19,132 @@
       <section class="load-actions">
         <button class="primary" id="open-models">＋ モデルを読み込む</button>
         <button id="open-motions">＋ モーションを読み込む</button>
-        <button id="open-folder">⌘ フォルダをライブラリに追加</button>
+        <button id="open-folder">⌘ フォルダを追加</button>
         <input id="models-file" type="file" multiple accept=".pmx,.pmd,.zip" hidden />
         <input id="motions-file" type="file" multiple accept=".vmd,.vpd" hidden />
         <input id="folder" type="file" webkitdirectory multiple hidden />
       </section>
       <section class="library-section"><div class="section-title"><span>MODEL LIBRARY</span><span id="model-library-count">0</span></div><div id="model-library" class="asset-list"><div class="empty">モデルを追加すると<br/>ここから再読み込みできます</div></div></section>
-      <section class="library-section"><div class="section-title"><span>MOTION LIBRARY</span><span id="motion-library-count">0</span></div><div id="motion-library" class="asset-list"><div class="empty">モーションを追加すると<br/>ここから適用できます</div></div></section>
-      <section><div class="section-title"><span>SCENE MODELS</span><button class="icon" id="clear-models" title="すべて削除">×</button></div><div id="models" class="asset-list"><div class="empty">モデルをドロップ<br/>して開始</div></div></section>
-      <section class="tips"><span>ヒント</span><p>モデルと一緒に VMD を選ぶと、読み込み後にモーションを追加できます。</p></section>
+      <section class="library-section"><div class="section-title"><span>MOTION LIBRARY</span><span id="motion-library-count">0</span></div><div id="motion-library" class="asset-list"><div class="empty">モーションを追加すると<br/>選択モデルへ適用できます</div></div></section>
+      <section class="scene-model-section">
+        <div class="section-title"><span>SCENE MODELS <small id="selected-count">0 selected</small></span><button class="icon" id="clear-models" title="すべて削除">×</button></div>
+        <div class="model-toolbar"><button id="select-all-models">ALL</button><button id="clear-selection">NONE</button><button id="arrange-models">ARRANGE</button></div>
+        <div id="models" class="asset-list"><div class="empty">モデルをドロップ<br/>して開始</div></div>
+      </section>
     </aside>
 
     <div class="hero"></div>
 
     <aside class="panel right">
-      <div class="tabs"><button class="active" data-tab="motion">MOTION</button><button data-tab="morph">MORPH</button><button data-tab="material">MATERIAL</button><button data-tab="scene">SCENE</button></div>
-      <div class="tab-content active" id="motion-tab">
-        <section><div class="section-title"><span>PLAYBACK</span><output id="timecode">00:00.0</output></div><div class="transport"><button id="play" class="play">❚❚</button><input id="timeline" type="range" min="0" max="1" step="0.001" value="0"/><button id="loop" class="toggle active" title="loop">↻</button></div><p class="muted">DEFAULT VMD — 待機・素立ち（120 frames / 4 sec、終端を0.42秒ブレンド）</p><label class="check"><input id="procedural-motion" type="checkbox" checked> PROCEDURAL LAYER（呼吸・瞬き）</label><label>PROCEDURAL WEIGHT <output id="procedural-weight-value">0.18</output></label><input id="procedural-weight" type="range" min="0" max=".5" step=".01" value=".18" /><label>CLIP BLEND <output id="motion-blend-value">0.22s</output></label><input id="motion-blend" type="range" min=".04" max=".8" step=".01" value=".22" /></section>
-        <section><div class="section-title"><span>SECONDARY MOTION</span><label class="switch"><input id="physics" type="checkbox"><i></i></label></div><button id="physics-reset" class="text-button">RESET PHYSICS</button><p class="muted">モデルの剛体・ジョイントを使い、固定タイムステップで更新します。</p><div class="preset-grid"><button data-physics-preset="hair">HAIR</button><button data-physics-preset="cloth">CLOTH</button><button data-physics-preset="body">BODY</button></div><label>QUALITY <output id="physics-quality-value">HIGH</output></label><input id="physics-quality" type="range" min="1" max="4" step="1" value="3" /><label>SPRING STIFFNESS <output id="stiffness-value">0.62</output></label><input id="stiffness" type="range" min="0" max="1" step=".01" value=".62" /><label>DAMPING <output id="damping-value">0.18</output></label><input id="damping" type="range" min="0" max="1" step=".01" value=".18" /><label>AIR RESISTANCE <output id="air-value">0.28</output></label><input id="air" type="range" min="0" max="1" step=".01" value=".28" /><label>GRAVITY <output id="gravity-value">1.00</output></label><input id="gravity" type="range" min="0" max="2" step=".05" value="1" /><label>WIND <output id="wind-value">0.00</output></label><input id="wind" type="range" min="0" max="30" step=".5" value="0" /><label>TURBULENCE <output id="turbulence-value">0.00</output></label><input id="turbulence" type="range" min="0" max="1" step=".01" value="0" /><label class="check"><input class="physics-part" data-part="hair" type="checkbox" checked> 髪</label><label class="check"><input class="physics-part" data-part="cloth" type="checkbox" checked> 衣装・リボン</label><label class="check"><input class="physics-part" data-part="body" type="checkbox" checked> 胴体・腰・脚</label></section>
+      <div class="tabs">
+        <button class="active" data-tab="motion">MOTION</button>
+        <button data-tab="life">LIFE</button>
+        <button data-tab="dynamics">DYNAMICS</button>
+        <button data-tab="morph">MORPH</button>
+        <button data-tab="look">LOOK</button>
+        <button data-tab="scene">SCENE</button>
       </div>
+
+      <div class="tab-content active" id="motion-tab">
+        <section>
+          <div class="section-title"><span>PLAYBACK</span><output id="timecode">00:00.0</output></div>
+          <div class="transport"><button id="play" class="play">❚❚</button><input id="timeline" type="range" min="0" max="1" step="0.001" value="0"/><button id="loop" class="toggle active" title="loop">↻</button></div>
+          <p class="muted">DEFAULT VMD — 待機・素立ち（120 frames / 4 sec）</p>
+          <label>APPLY TO</label><select id="motion-scope"><option value="active">ACTIVE MODEL</option><option value="selected" selected>SELECTED MODELS</option><option value="all">ALL MODELS</option></select>
+          <div class="button-row"><button id="sync-motion">SYNC TIME</button><button id="restart-motion">RESTART</button></div>
+          <label>CLIP BLEND <output id="motion-blend-value">0.22s</output></label><input id="motion-blend" type="range" min=".04" max=".8" step=".01" value=".22" />
+          <label>LOOP SEAM <output id="loop-blend-value">0.38s</output></label><input id="loop-blend" type="range" min="0" max=".8" step=".01" value=".38" />
+        </section>
+      </div>
+
+      <div class="tab-content" id="life-tab">
+        <section>
+          <div class="section-title"><span>LIVING LAYER</span><label class="switch"><input id="life-enabled" type="checkbox" checked><i></i></label></div>
+          <div class="preset-grid"><button data-life-preset="calm">CALM</button><button data-life-preset="natural">NATURAL</button><button data-life-preset="alert">ALERT</button></div>
+          <p class="muted">VMDを土台に、MMDモーフの瞬き、視線、呼吸、部位別の微細姿勢変化を加算します。</p>
+        </section>
+        <section>
+          <div class="section-title"><span>EYES & BLINK</span><button id="test-blink" class="text-button">TEST BLINK</button></div>
+          <p id="blink-morph-status" class="muted">モデルを選択すると、使用するMMDモーフを表示します。</p>
+          <label>BLINK ACTIVITY <output id="blink-activity-value">0.52</output></label><input id="blink-activity" type="range" min="0" max="1" step=".01" value=".52" />
+          <label>BLINK STRENGTH <output id="blink-strength-value">0.94</output></label><input id="blink-strength" type="range" min="0" max="1" step=".01" value=".94" />
+          <label>BLINK DURATION <output id="blink-duration-value">1.00</output></label><input id="blink-duration" type="range" min="0" max="1" step=".01" value="1" />
+          <label>SOFT BLINK CHANCE <output id="soft-blink-value">0.22</output></label><input id="soft-blink" type="range" min="0" max=".6" step=".01" value=".22" />
+          <label>DOUBLE BLINK CHANCE <output id="double-blink-value">0.12</output></label><input id="double-blink" type="range" min="0" max=".5" step=".01" value=".12" />
+          <label>GAZE-EVOKED BLINK <output id="blink-on-gaze-value">0.35</output></label><input id="blink-on-gaze" type="range" min="0" max="1" step=".01" value=".35" />
+          <label>GAZE ACTIVITY <output id="gaze-activity-value">0.48</output></label><input id="gaze-activity" type="range" min="0" max="1" step=".01" value=".48" />
+          <label>GAZE RANGE <output id="gaze-range-value">0.42</output></label><input id="gaze-range" type="range" min="0" max="1" step=".01" value=".42" />
+          <label>GAZE DWELL <output id="gaze-dwell-value">0.55</output></label><input id="gaze-dwell" type="range" min="0" max="1" step=".01" value=".55" />
+          <label>MICROSACCADE <output id="micro-saccade-value">0.26</output></label><input id="micro-saccade" type="range" min="0" max="1" step=".01" value=".26" />
+          <label>HEAD FOLLOW <output id="head-follow-value">0.24</output></label><input id="head-follow" type="range" min="0" max="1" step=".01" value=".24" />
+          <label class="check"><input id="follow-pointer" type="checkbox"> Pointer / controller を見る</label>
+        </section>
+        <section>
+          <div class="section-title"><span>RESPIRATION</span></div>
+          <label>BREATH RATE <output id="breath-rate-value">14 bpm</output></label><input id="breath-rate" type="range" min="6" max="28" step=".5" value="14" />
+          <label>BREATH DEPTH <output id="breath-depth-value">0.24</output></label><input id="breath-depth" type="range" min="0" max="1" step=".01" value=".24" />
+          <label>RATE VARIATION <output id="breath-variation-value">0.16</output></label><input id="breath-variation" type="range" min="0" max="1" step=".01" value=".16" />
+        </section>
+        <section>
+          <div class="section-title"><span>POSTURAL MICRO-MOTION</span></div>
+          <label>GLOBAL SWAY <output id="sway-value">0.22</output></label><input id="sway" type="range" min="0" max="1" step=".01" value=".22" />
+          <label>SWAY SPEED <output id="sway-speed-value">0.44</output></label><input id="sway-speed" type="range" min="0" max="1" step=".01" value=".44" />
+          <label>IRREGULARITY <output id="sway-irregularity-value">0.32</output></label><input id="sway-irregularity" type="range" min="0" max="1" step=".01" value=".32" />
+          <div id="sway-regions" class="region-list"></div>
+        </section>
+      </div>
+
+      <div class="tab-content" id="dynamics-tab">
+        <section>
+          <div class="section-title"><span>SECONDARY MOTION</span><label class="switch"><input id="physics" type="checkbox"><i></i></label></div>
+          <div class="button-row"><button id="physics-reset">RESET PHYSICS</button></div>
+          <label>QUALITY <output id="physics-quality-value">HIGH</output></label><input id="physics-quality" type="range" min="1" max="4" step="1" value="3" />
+          <label>SPRING STIFFNESS <output id="stiffness-value">0.62</output></label><input id="stiffness" type="range" min="0" max="1" step=".01" value=".62" />
+          <label>DAMPING <output id="damping-value">0.18</output></label><input id="damping" type="range" min="0" max="1" step=".01" value=".18" />
+          <label>AIR RESISTANCE <output id="air-value">0.28</output></label><input id="air" type="range" min="0" max="1" step=".01" value=".28" />
+          <label>GRAVITY <output id="gravity-value">1.00</output></label><input id="gravity" type="range" min="0" max="2" step=".05" value="1" />
+          <label>WIND <output id="wind-value">0.00</output></label><input id="wind" type="range" min="0" max="30" step=".5" value="0" />
+          <label>TURBULENCE <output id="turbulence-value">0.00</output></label><input id="turbulence" type="range" min="0" max="1" step=".01" value="0" />
+        </section>
+        <section>
+          <div class="section-title"><span>PHYSICS REGIONS</span></div>
+          <p class="muted">部位ごとに有効化、反応、減衰、重力、風の影響を調整します。</p>
+          <div id="physics-parts" class="region-list"></div>
+        </section>
+        <section>
+          <div class="section-title"><span>DIRECT INTERACTION</span></div>
+          <label>POINTER MODE</label><select id="interaction-mode"><option value="select">SELECT</option><option value="move">MOVE MODEL</option><option value="poke">POKE PHYSICS</option><option value="pull">PULL PHYSICS</option></select>
+          <label class="check"><input id="ground-lock" type="checkbox" checked> モデル移動を床面に固定</label>
+          <label>MOVE RESPONSE <output id="drag-response-value">0.72</output></label><input id="drag-response" type="range" min="0" max="1" step=".01" value=".72" />
+          <label>POKE STRENGTH <output id="poke-strength-value">1.20</output></label><input id="poke-strength" type="range" min=".1" max="5" step=".1" value="1.2" />
+          <label>POKE RADIUS <output id="poke-radius-value">0.85</output></label><input id="poke-radius" type="range" min=".2" max="2" step=".05" value=".85" />
+          <label>PULL STRENGTH <output id="pull-strength-value">18.0</output></label><input id="pull-strength" type="range" min="2" max="50" step="1" value="18" />
+          <label>PULL DAMPING <output id="pull-damping-value">3.5</output></label><input id="pull-damping" type="range" min="0" max="12" step=".5" value="3.5" />
+          <label>PULL RADIUS <output id="pull-radius-value">1.20</output></label><input id="pull-radius" type="range" min=".2" max="2.5" step=".05" value="1.2" />
+        </section>
+      </div>
+
       <div class="tab-content" id="morph-tab"><section><div class="section-title"><span>EXPRESSION</span><button id="reset-morph" class="text-button">RESET</button></div><div id="morphs" class="morph-list"><div class="empty">モデルを選択すると<br/>モーフが表示されます</div></div></section></div>
-      <div class="tab-content" id="material-tab"><section><div class="section-title"><span>MATERIAL VISIBILITY</span><button id="show-all-materials" class="text-button">SHOW ALL</button></div><div id="materials" class="morph-list"><div class="empty">モデルを選択すると<br/>マテリアルが表示されます</div></div></section></div>
-      <div class="tab-content" id="scene-tab">
+
+      <div class="tab-content" id="look-tab">
+        <section><div class="section-title"><span>MATERIAL VISIBILITY</span><button id="show-all-materials" class="text-button">SHOW ALL</button></div><div id="materials" class="morph-list compact"><div class="empty">モデルを選択すると<br/>マテリアルが表示されます</div></div></section>
         <section><div class="section-title"><span>RENDERING</span></div><label class="check"><input id="toon-outline" type="checkbox" checked> Toon outline</label><label>TOON OUTLINE <output id="outline-value">0.28</output></label><input id="outline" type="range" min="0" max="1.5" step=".05" value=".28" /><label>FIELD OF VIEW <output id="fov-value">38°</output></label><input id="fov" type="range" min="20" max="90" step="1" value="38" /><label>EXPOSURE <output id="exposure-value">1.0</output></label><input id="exposure" type="range" min=".4" max="2" step=".1" value="1" /></section>
-        <section><div class="section-title"><span>HDRI ENVIRONMENT</span><button id="open-hdri" class="text-button">LOAD HDR</button></div><input id="hdri" type="file" accept=".hdr" hidden /><p id="hdri-name" class="muted">Poly Haven — White Studio 05 (CC0)</p><label>ENVIRONMENT INTENSITY <output id="env-value">1.0</output></label><input id="env-intensity" type="range" min="0" max="2" step=".05" value="1" /><label class="check"><input id="show-hdri" type="checkbox" checked> HDRI を背景に表示</label></section>
-        <section><div class="section-title"><span>CAMERA PRESET</span></div><div class="preset-grid"><button data-camera="front">FRONT</button><button data-camera="threequarter">3/4</button><button data-camera="wide">WIDE</button></div></section>
-        <section><div class="section-title"><span>RIG EDIT</span></div><label class="check"><input id="rig-edit" type="checkbox"> 胸・腰ボーンを移動</label><p class="muted">ボーンのハンドルをクリックし、矢印で移動します。</p></section>
         <section><div class="section-title"><span>NATIVE MMD TOON</span></div><p class="muted">MMDToonMaterial本来のシェーダーを維持し、安全な材質プロパティだけを調整します。</p><label>SPECULAR <output id="specular-value">0.16</output></label><input id="specular" type="range" min="0" max="1" step=".01" value=".16" /><label>SHADOW LIFT <output id="shadow-lift-value">0.04</output></label><input id="shadow-lift" type="range" min="0" max=".4" step=".01" value=".04" /></section>
+        <section><div class="section-title"><span>HDRI ENVIRONMENT</span><button id="open-hdri" class="text-button">LOAD HDR</button></div><input id="hdri" type="file" accept=".hdr" hidden /><p id="hdri-name" class="muted">Poly Haven — White Studio 05 (CC0)</p><label>ENVIRONMENT INTENSITY <output id="env-value">0.65</output></label><input id="env-intensity" type="range" min="0" max="2" step=".05" value=".65" /><label class="check"><input id="show-hdri" type="checkbox"> HDRI を背景に表示</label></section>
+      </div>
+
+      <div class="tab-content" id="scene-tab">
+        <section><div class="section-title"><span>MULTI MODEL</span></div><div class="button-row"><button id="scene-select-all">SELECT ALL</button><button id="scene-arrange">ARRANGE</button></div><p class="muted">Ctrl / Shift クリックで複数選択。MOVE MODELでは選択モデルをまとめて移動できます。</p></section>
+        <section><div class="section-title"><span>CAMERA PRESET</span></div><div class="preset-grid"><button data-camera="front">FRONT</button><button data-camera="threequarter">3/4</button><button data-camera="wide">WIDE</button></div></section>
+        <section><div class="section-title"><span>RIG EDIT</span></div><label class="check"><input id="rig-edit" type="checkbox"> 胸・腰ボーンを移動</label><p class="muted">ボーンハンドルをクリックし、TransformControlsで移動します。</p></section>
         <section><div class="section-title"><span>STAGE</span></div><label class="check"><input id="grid" type="checkbox" checked> Grid floor</label><label class="check"><input id="shadows" type="checkbox" checked> Soft shadows</label></section>
       </div>
-      <footer><span id="notice">READY — LOCAL MODE</span><span id="build-version">v4.1.1</span></footer>
+
+      <footer><span id="notice">READY — LOCAL MODE</span><span id="build-version">v4.2.0</span></footer>
     </aside>
   </main>
   <div id="toast"></div>
   <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}</script>
-  <script type="module" src="./dist/app.js?v=mmd-lab-4-1-1"></script>
+  <script type="module" src="./dist/app.js?v=mmd-lab-4-2-0"></script>
 </body>
 </html>

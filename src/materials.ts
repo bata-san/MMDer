@@ -8,7 +8,7 @@ interface NativeMaterialState {
   emissive?: any;
   emissiveIntensity?: number;
   outlineAlpha?: number;
-  outlineColor?: [number, number, number];
+  outlineColor?: number[];
 }
 
 export function eachMaterial(root: any, callback: (material: any, mesh: any) => void): void {
@@ -17,6 +17,30 @@ export function eachMaterial(root: any, callback: (material: any, mesh: any) => 
     const materials = Array.isArray(node.material) ? node.material : [node.material];
     materials.forEach((material: any) => callback(material, node));
   });
+}
+
+function textureHasData(texture: any): boolean {
+  if (!texture) return false;
+  const source = texture.source?.data;
+  const image = texture.image;
+  return Boolean(
+    source
+    || image?.data
+    || image?.width
+    || image?.videoWidth
+    || image?.naturalWidth
+    || (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap)
+    || (typeof HTMLCanvasElement !== 'undefined' && image instanceof HTMLCanvasElement)
+    || (typeof HTMLVideoElement !== 'undefined' && image instanceof HTMLVideoElement)
+    || (typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0),
+  );
+}
+
+function setTextureColorSpace(texture: any, colorSpace: any): void {
+  // Changing colorSpace marks a texture for upload. MMDToonMaterial sometimes exposes
+  // a placeholder gradient texture before its image arrives, so never touch placeholders.
+  if (!textureHasData(texture) || texture.colorSpace === colorSpace) return;
+  texture.colorSpace = colorSpace;
 }
 
 function rememberNativeState(material: any): NativeMaterialState {
@@ -28,15 +52,14 @@ function rememberNativeState(material: any): NativeMaterialState {
     emissive: material.emissive?.clone?.(),
     emissiveIntensity: typeof material.emissiveIntensity === 'number' ? material.emissiveIntensity : undefined,
     outlineAlpha: outline ? Number(outline.alpha) || 1 : undefined,
-    outlineColor: outline?.color ? [...outline.color] as [number, number, number] : undefined,
+    outlineColor: outline?.color ? [...outline.color] : undefined,
   };
   material.userData.mmdLabNativeMaterial = native;
   return native;
 }
 
 function restoreNativeShaderHooks(material: any): void {
-  // v4.1.0 briefly installed an incompatible onBeforeCompile patch on MMDToonMaterial.
-  // Freshly loaded materials do not need this, but clearing our cache key keeps hot reloads safe.
+  // v4.1.0 installed an incompatible shader patch. Clear only hooks created by MMD LAB.
   if (!material.userData.mmdLabToonInstalled) return;
   material.onBeforeCompile = () => {};
   material.customProgramCacheKey = () => '';
@@ -47,11 +70,8 @@ function restoreNativeShaderHooks(material: any): void {
 function applyNativeMaterialSettings(material: any): void {
   const native = rememberNativeState(material);
   const { specular, shadowLift } = state.toonSettings;
-
   if (native.specular && material.specular?.copy) {
-    material.specular.copy(native.specular);
-    const scale = 0.55 + specular * 1.45;
-    material.specular.multiplyScalar(scale);
+    material.specular.copy(native.specular).multiplyScalar(0.55 + specular * 1.45);
   }
   if (native.shininess !== undefined && typeof material.shininess === 'number') {
     material.shininess = Math.max(0, native.shininess * (0.7 + specular * 1.8));
@@ -59,13 +79,12 @@ function applyNativeMaterialSettings(material: any): void {
   if (native.emissive && material.emissive?.copy) {
     material.emissive.copy(native.emissive);
     if (material.color && shadowLift > 0) {
-      material.emissive.lerp(material.color, Math.min(0.12, shadowLift * 0.3));
+      material.emissive.lerp(material.color, Math.min(0.1, shadowLift * 0.24));
     }
   }
   if (native.emissiveIntensity !== undefined && typeof material.emissiveIntensity === 'number') {
-    material.emissiveIntensity = native.emissiveIntensity + shadowLift * 0.35;
+    material.emissiveIntensity = native.emissiveIntensity + shadowLift * 0.28;
   }
-
   const outline = material.userData?.outlineParameters;
   if (outline) {
     if (native.outlineAlpha !== undefined) outline.alpha = native.outlineAlpha;
@@ -77,20 +96,18 @@ export function configureMmdMaterials(root: any): void {
   eachMaterial(root, (material) => {
     restoreNativeShaderHooks(material);
 
-    if (material.map) material.map.colorSpace = THREE.SRGBColorSpace;
-    if (material.emissiveMap) material.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+    setTextureColorSpace(material.map, THREE.SRGBColorSpace);
+    setTextureColorSpace(material.emissiveMap, THREE.SRGBColorSpace);
     [material.alphaMap, material.normalMap, material.bumpMap, material.aoMap, material.gradientMap]
-      .filter(Boolean)
-      .forEach((texture: any) => { texture.colorSpace = THREE.NoColorSpace; });
+      .forEach((texture: any) => setTextureColorSpace(texture, THREE.NoColorSpace));
 
-    if (material.gradientMap) {
+    if (textureHasData(material.gradientMap)) {
       material.gradientMap.minFilter = THREE.NearestFilter;
       material.gradientMap.magFilter = THREE.NearestFilter;
       material.gradientMap.generateMipmaps = false;
-      material.gradientMap.needsUpdate = true;
     }
 
-    // Keep MMDLoader's native transparency, side, blending and depth decisions intact.
+    // Preserve MMDLoader's side, transparency, blending and depth-write decisions.
     material.depthTest = true;
     material.dithering = true;
     material.toneMapped = true;
@@ -104,7 +121,6 @@ export function configureMmdMaterials(root: any): void {
     }
 
     applyNativeMaterialSettings(material);
-    material.needsUpdate = true;
   });
 }
 
@@ -121,6 +137,5 @@ export function applyOutlineScale(): void {
 export function applyToonSettings(): void {
   state.models.forEach((item) => eachMaterial(item.mesh, (material) => {
     applyNativeMaterialSettings(material);
-    material.needsUpdate = true;
   }));
 }

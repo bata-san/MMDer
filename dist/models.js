@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
+import { createLifeController } from './life.js';
 import { applyOutlineScale, applyToonSettings, configureMmdMaterials } from './materials.js';
 import { createMotionController, loadDefaultMotion, recomputeDuration } from './motion.js';
-import { enablePhysics } from './physics.js';
+import { enablePhysics, resetPhysics } from './physics.js';
 import { controls, frameObject, loader, scene, stage, transform } from './scene.js';
 import { state } from './state.js';
 const activeListeners = new Set();
@@ -15,11 +16,54 @@ export function onModelsChange(listener) {
     modelsListeners.add(listener);
     return () => modelsListeners.delete(listener);
 }
-export function setActiveModel(item) {
-    state.active = item;
-    setupRigHandles(item);
-    activeListeners.forEach((listener) => listener(item));
+function emitChanges() {
+    activeListeners.forEach((listener) => listener(state.active));
     modelsListeners.forEach((listener) => listener());
+}
+export function setActiveModel(item, keepSelection = false) {
+    state.active = item;
+    if (!keepSelection)
+        state.selectedModels = item ? [item] : [];
+    else if (item && !state.selectedModels.includes(item))
+        state.selectedModels.push(item);
+    setupRigHandles(item);
+    emitChanges();
+}
+export function toggleModelSelection(item, selected) {
+    if (selected && !state.selectedModels.includes(item))
+        state.selectedModels.push(item);
+    if (!selected)
+        state.selectedModels = state.selectedModels.filter((model) => model !== item);
+    if (selected)
+        state.active = item;
+    else if (state.active === item)
+        state.active = state.selectedModels.at(-1) ?? null;
+    setupRigHandles(state.active);
+    emitChanges();
+}
+export function selectAllModels() {
+    state.selectedModels = state.models.filter((model) => model.visible);
+    state.active ??= state.selectedModels.at(-1) ?? null;
+    setupRigHandles(state.active);
+    emitChanges();
+}
+export function clearModelSelection() {
+    state.selectedModels = [];
+    state.active = null;
+    setupRigHandles(null);
+    emitChanges();
+}
+export function arrangeModels() {
+    const visible = state.models.filter((model) => model.visible);
+    const columns = Math.max(1, Math.ceil(Math.sqrt(visible.length)));
+    const spacing = 2.8;
+    visible.forEach((model, index) => {
+        const column = index % columns;
+        const row = Math.floor(index / columns);
+        model.mesh.position.set((column - (Math.min(columns, visible.length) - 1) / 2) * spacing, model.mesh.position.y, -row * spacing * 0.72);
+        resetPhysics(model);
+    });
+    emitChanges();
 }
 export function loadModel(file) {
     return new Promise((resolve) => {
@@ -39,15 +83,19 @@ export function loadModel(file) {
                 node.receiveShadow = false;
             });
             configureMmdMaterials(mesh);
+            const motion = createMotionController(mesh);
             const item = {
+                id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
                 mesh,
                 file,
                 name: file.name,
                 visible: true,
                 physics: null,
-                motion: createMotionController(mesh),
+                motion,
+                life: createLifeController(mesh, motion),
             };
-            mesh.position.x = state.models.length * 2.7;
+            const index = state.models.length;
+            mesh.position.x = index * 2.7;
             stage.add(mesh);
             state.models.push(item);
             const defaultLoaded = await loadDefaultMotion(item);
@@ -57,6 +105,8 @@ export function loadModel(file) {
             if (state.physics)
                 await enablePhysics(item);
             setActiveModel(item);
+            if (state.models.length > 1)
+                arrangeModels();
             frameObject(mesh);
             setNotice();
             toast(defaultLoaded ? `${file.name} — 待機・素立ち VMD` : `${file.name} — モーションなし`);
@@ -71,8 +121,19 @@ export function loadModel(file) {
     });
 }
 export function focusModel(item) {
-    setActiveModel(item);
+    setActiveModel(item, state.selectedModels.includes(item));
     frameObject(item.mesh);
+}
+export function modelFromObject(object) {
+    return state.models.find((model) => {
+        let current = object;
+        while (current) {
+            if (current === model.mesh)
+                return true;
+            current = current.parent;
+        }
+        return false;
+    }) ?? null;
 }
 export function disposeModel(item) {
     stage.remove(item.mesh);
@@ -89,15 +150,20 @@ export function disposeModel(item) {
 export function removeModel(item) {
     disposeModel(item);
     state.models = state.models.filter((model) => model !== item);
+    state.selectedModels = state.selectedModels.filter((model) => model !== item);
     recomputeDuration();
-    setActiveModel(state.active === item ? state.models.at(-1) ?? null : state.active);
+    setActiveModel(state.active === item ? state.selectedModels.at(-1) ?? state.models.at(-1) ?? null : state.active, true);
+    if (state.models.length > 1)
+        arrangeModels();
     toast(`${item.name} をシーンから削除しました`);
 }
 export function clearModels() {
     state.models.forEach(disposeModel);
     state.models = [];
+    state.selectedModels = [];
     state.active = null;
     state.duration = 0;
+    state.elapsed = 0;
     setActiveModel(null);
 }
 function setupRigHandles(item) {
@@ -110,7 +176,8 @@ function setupRigHandles(item) {
     item.mesh.traverse((node) => { if (node.isBone)
         bones.push(node); });
     const chosen = [
-        bones.find((bone) => /上半身|chest|spine/i.test(bone.name)),
+        bones.find((bone) => /上半身2|胸|chest|spine2/i.test(bone.name))
+            ?? bones.find((bone) => /上半身|chest|spine/i.test(bone.name)),
         bones.find((bone) => /腰|センター|hips|pelvis/i.test(bone.name)),
     ].filter(Boolean);
     chosen.forEach((bone, index) => {

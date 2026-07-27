@@ -8,6 +8,9 @@
 - フォルダ、ZIP、複数ファイルの一括投入と複数モデルの同時表示
 - 添付の待機・素立ち VMD を標準アイドルとして自動適用
 - モーフ操作、再生・ループ、カメラプリセット
+- 実MMDモーフによる非累積の瞬き、視線・マイクロサッカード、呼吸、部位別姿勢ゆらぎ
+- モデルの複数選択、同期再生、自動整列、グループ移動
+- クリックによる物理つつき、ドラッグによる剛体の引っ張り
 - 固定ステップ MMD 物理、拘束調整、空気抵抗、風・乱流、部位別制御
 - MMDToonMaterial本来のシェーダーを維持した安全な材質調整、アウトライン、ACES、HDRI、影、グリッド
 - WebXR / VRButton、local-floor、VR向け実寸ステージ、コントローラーレイ
@@ -21,7 +24,9 @@
 
 - `src/scene.ts` / `src/xr.ts`: Three.js、照明、HDRI、WebXR、実寸ステージ
 - `src/storage.ts` / `src/assets.ts`: IndexedDB、ZIP、ファイル分類
-- `src/motion.ts`: 標準VMD、終端シーム補正、クロスフェード、加算式の呼吸・瞬き
+- `src/motion.ts`: 標準VMD、終端シーム補正、クロスフェード、複数モデル同期
+- `src/life.ts` / `src/life-math.ts`: 実モーフ瞬き、視線、呼吸、部位別の微細動作
+- `src/interaction.ts`: 選択、グループ移動、物理つつき、引っ張り
 - `src/physics.ts`: 固定ステップ Ammo.js / MMDPhysics ランタイム
 - `src/models.ts` / `src/materials.ts`: モデル、リグ、トゥーン材質
 - `src/views.ts` / `src/ui.ts`: DOM描画とイベント配線
@@ -31,6 +36,9 @@
 npm install
 npm run typecheck
 npm run build
+npm run check
 ```
 
 コンパイル済みの `dist/*.js` も管理対象なので、デプロイ時はビルド不要です。WebXRはHTTPSまたはlocalhost上で利用してください。
+
+実装上の根拠とパラメーター設計は [`docs/behavior-model.md`](docs/behavior-model.md) にまとめています。

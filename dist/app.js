@@ -1,5 +1,7 @@
 import { $, input, output } from './dom.js';
-import { recomputeDuration, updateProceduralMotion } from './motion.js';
+import { updateInteraction, setupInteraction } from './interaction.js';
+import { updateLife } from './life.js';
+import { recomputeDuration } from './motion.js';
 import { updateRigHandles } from './models.js';
 import { stepPhysics } from './physics.js';
 import { BUILD_VERSION, state } from './state.js';
@@ -49,15 +51,17 @@ function updatePerformance(now) {
 }
 function animate() {
     const delta = Math.min(clock.getDelta(), 0.05);
-    if (state.playing) {
+    if (state.playing)
         state.elapsed += delta;
-        state.models.forEach((model) => {
+    state.models.forEach((model) => {
+        if (state.playing)
             model.motion.mixer.update(delta);
-            updateProceduralMotion(model.motion, delta);
+        updateLife(model.life, model.motion, delta, state.playing);
+        if (state.playing)
             stepPhysics(model, delta, state.elapsed);
-        });
-    }
+    });
     updateTimeline();
+    updateInteraction(delta);
     updateRigHandles();
     if (!state.xrPresenting)
         controls.update();
@@ -66,6 +70,7 @@ function animate() {
 }
 async function start() {
     bindUi();
+    setupInteraction();
     setupXr();
     await refreshStoredAssets();
     renderLibraries();

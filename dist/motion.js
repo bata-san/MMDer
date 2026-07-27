@@ -35,7 +35,7 @@ function makeLoopFriendlyClip(source, blendDuration) {
             return;
         const seamStart = trackEnd - seam;
         const first = Array.from(values.slice(0, stride));
-        const quaternionTrack = track instanceof THREE.QuaternionKeyframeTrack || stride === 4 && /quaternion$/i.test(track.name);
+        const quaternionTrack = track instanceof THREE.QuaternionKeyframeTrack || (stride === 4 && /quaternion$/i.test(track.name));
         for (let key = 0; key < count; key += 1) {
             const time = Number(times[key]);
             if (time < seamStart)
@@ -55,94 +55,23 @@ function makeLoopFriendlyClip(source, blendDuration) {
             }
         }
         const lastOffset = (count - 1) * stride;
-        for (let component = 0; component < stride; component += 1) {
+        for (let component = 0; component < stride; component += 1)
             values[lastOffset + component] = first[component];
-        }
     });
     clip.name = source.name;
     return clip;
 }
-function findBone(mesh, pattern) {
-    let match = null;
-    mesh.traverse((node) => {
-        if (!match && node.isBone && pattern.test(node.name))
-            match = node;
-    });
-    return match;
-}
-function quaternionTrack(name, times, rotations) {
-    const values = [];
-    rotations.forEach(([x, y, z]) => {
-        const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
-        values.push(...quaternion.toArray());
-    });
-    return new THREE.QuaternionKeyframeTrack(`.bones[${name}].quaternion`, times, values);
-}
-function createProceduralClip(mesh) {
-    const duration = 4;
-    const times = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
-    const tracks = [];
-    const upper2 = findBone(mesh, /上半身2|upper.?body.?2/i);
-    const upper = findBone(mesh, /上半身|胸|chest|spine/i);
-    const neck = findBone(mesh, /首|neck/i);
-    if (upper) {
-        tracks.push(quaternionTrack(upper.name, times, [
-            [0, 0, 0], [0.003, 0, 0.001], [0.006, 0, 0.002], [0.003, 0, 0.001],
-            [0, 0, 0], [-0.002, 0, -0.001], [-0.004, 0, -0.002], [-0.002, 0, -0.001], [0, 0, 0],
-        ]));
-    }
-    if (upper2) {
-        tracks.push(quaternionTrack(upper2.name, times, [
-            [0, 0, 0], [0.002, 0.001, 0], [0.004, 0.002, 0], [0.002, 0.001, 0],
-            [0, 0, 0], [-0.001, -0.001, 0], [-0.003, -0.002, 0], [-0.001, -0.001, 0], [0, 0, 0],
-        ]));
-    }
-    if (neck) {
-        tracks.push(quaternionTrack(neck.name, times, [
-            [0, 0, 0], [0, 0.001, 0], [0.001, 0.002, 0], [0, 0.001, 0],
-            [0, 0, 0], [0, -0.001, 0], [-0.001, -0.002, 0], [0, -0.001, 0], [0, 0, 0],
-        ]));
-    }
-    if (!tracks.length)
-        return null;
-    const clip = new THREE.AnimationClip('Procedural breathing layer', duration, tracks);
-    THREE.AnimationUtils.makeClipAdditive(clip, 0, clip, 30);
-    return clip;
-}
-function blinkBindings(mesh) {
-    const bindings = [];
-    morphMeshes(mesh).forEach((node) => {
-        Object.entries(node.morphTargetDictionary).forEach(([name, index]) => {
-            if (/まばたき|blink|eye.?close/i.test(name))
-                bindings.push({ node, index: Number(index) });
-        });
-    });
-    return bindings;
-}
 export function createMotionController(mesh) {
-    const mixer = new THREE.AnimationMixer(mesh);
-    const proceduralClip = createProceduralClip(mesh);
-    const proceduralAction = proceduralClip ? mixer.clipAction(proceduralClip) : null;
-    if (proceduralAction) {
-        proceduralAction.setLoop(THREE.LoopRepeat, Infinity);
-        proceduralAction.setEffectiveWeight(state.proceduralMotion ? state.proceduralWeight : 0);
-        proceduralAction.play();
-    }
     return {
         mesh,
-        mixer,
+        mixer: new THREE.AnimationMixer(mesh),
         clips: new Map(),
         actions: new Map(),
         current: null,
         currentName: '',
-        proceduralClip,
-        proceduralAction,
-        blinkBindings: blinkBindings(mesh),
-        blinkElapsed: 0,
-        nextBlinkAt: 2.5 + Math.random() * 2,
     };
 }
-export function playMotion(controller, sourceClip, name = sourceClip.name || 'VMD', blend = state.motionBlend, loopFriendly = false) {
+export function playMotion(controller, sourceClip, name = sourceClip.name || 'VMD', blend = state.motionBlend, loopFriendly = false, resetTimeline = true) {
     const clip = loopFriendly ? makeLoopFriendlyClip(sourceClip, state.loopBlend) : sourceClip;
     controller.clips.set(name, clip);
     const next = controller.mixer.clipAction(clip);
@@ -161,7 +90,10 @@ export function playMotion(controller, sourceClip, name = sourceClip.name || 'VM
     controller.current = next;
     controller.currentName = name;
     controller.mesh.userData.motionName = name;
-    state.elapsed = 0;
+    if (resetTimeline)
+        state.elapsed = 0;
+    else
+        next.time = state.loop ? state.elapsed % Math.max(clip.duration, 0.001) : Math.min(state.elapsed, clip.duration);
     recomputeDuration();
 }
 export function setMotionLooping(enabled) {
@@ -175,50 +107,32 @@ export function setMotionLooping(enabled) {
 }
 export function seekMotions(time) {
     state.models.forEach((model) => {
-        const controller = model.motion;
-        const action = controller.current;
+        const action = model.motion.current;
         if (action) {
             const duration = Number(action.getClip?.().duration) || state.duration || 1;
             action.time = state.loop ? time % duration : Math.min(time, duration);
             action.paused = false;
         }
-        if (controller.proceduralAction && controller.proceduralClip) {
-            controller.proceduralAction.time = time % controller.proceduralClip.duration;
-        }
-        controller.mixer.update(0);
+        model.motion.mixer.update(0);
     });
 }
-export function setProceduralMotion(enabled, weight = state.proceduralWeight) {
-    state.proceduralMotion = enabled;
-    state.proceduralWeight = weight;
-    state.models.forEach((model) => {
-        const action = model.motion.proceduralAction;
-        if (!action)
-            return;
-        action.enabled = true;
-        action.setEffectiveWeight(enabled ? weight : 0);
+export function synchronizeMotions(reset = false) {
+    if (reset)
+        state.elapsed = 0;
+    seekMotions(state.elapsed);
+}
+export function motionControlsMorph(controller, name, index) {
+    const tracks = controller.current?.getClip?.().tracks ?? [];
+    const byName = `morphTargetInfluences[${name}]`;
+    const byIndex = `morphTargetInfluences[${index}]`;
+    return tracks.some((track) => {
+        const path = String(track.name);
+        return path.includes(byName) || path.includes(byIndex);
     });
 }
-export function updateProceduralMotion(controller, delta) {
-    if (controller.proceduralAction) {
-        controller.proceduralAction.setEffectiveWeight(state.proceduralMotion ? state.proceduralWeight : 0);
-    }
-    if (!state.proceduralMotion || !controller.blinkBindings.length)
-        return;
-    controller.blinkElapsed += delta;
-    const blinkAge = controller.blinkElapsed - controller.nextBlinkAt;
-    if (blinkAge < 0)
-        return;
-    if (blinkAge > 0.18) {
-        controller.nextBlinkAt = controller.blinkElapsed + 2.8 + Math.random() * 4.2;
-        return;
-    }
-    const phase = Math.sin(Math.PI * blinkAge / 0.18);
-    const strength = Math.min(0.9, state.proceduralWeight * 4.2);
-    controller.blinkBindings.forEach(({ node, index }) => {
-        const base = Number(node.morphTargetInfluences[index]) || 0;
-        node.morphTargetInfluences[index] = base + (1 - base) * phase * strength;
-    });
+export function motionControlsBone(controller, name) {
+    const tracks = controller.current?.getClip?.().tracks ?? [];
+    return tracks.some((track) => String(track.name).includes(`bones[${name}]`));
 }
 export function recomputeDuration() {
     state.duration = state.models.reduce((maximum, model) => {
@@ -226,10 +140,10 @@ export function recomputeDuration() {
         return Math.max(maximum, duration);
     }, 0);
 }
-function loadAnimationUrl(url, item, name, blend, loopFriendly = false) {
+function loadAnimationUrl(url, item, name, blend, loopFriendly = false, resetTimeline = true) {
     return new Promise((resolve) => {
         loader.loadAnimation(url, item.mesh, (clip) => {
-            playMotion(item.motion, clip, name, blend, loopFriendly);
+            playMotion(item.motion, clip, name, blend, loopFriendly, resetTimeline);
             resolve(true);
         }, undefined, (error) => {
             console.warn(`Motion load failed: ${name}`, error);
@@ -251,7 +165,8 @@ async function defaultIdleObjectUrl() {
 export async function loadDefaultMotion(item) {
     try {
         const url = await defaultIdleObjectUrl();
-        const loaded = await loadAnimationUrl(url, item, DEFAULT_IDLE_NAME, 0.08, true);
+        const resetTimeline = state.models.length <= 1;
+        const loaded = await loadAnimationUrl(url, item, DEFAULT_IDLE_NAME, 0.08, true, resetTimeline);
         if (!loaded)
             toast('標準待機VMDを読み込めませんでした');
         return loaded;
@@ -262,18 +177,28 @@ export async function loadDefaultMotion(item) {
         return false;
     }
 }
-export function applyMotion(file, item = state.active) {
-    if (!item) {
+export function motionTargets(explicit = null) {
+    if (explicit)
+        return [explicit];
+    if (state.motionScope === 'all')
+        return [...state.models];
+    if (state.motionScope === 'selected' && state.selectedModels.length)
+        return [...state.selectedModels];
+    return state.active ? [state.active] : [];
+}
+export async function applyMotion(file, explicit = null) {
+    const targets = motionTargets(explicit);
+    if (!targets.length) {
         toast('先にモデルを選択してください');
-        return Promise.resolve();
+        return;
     }
-    const url = objectUrl(file);
     if (extension(file) === 'vpd') {
-        return new Promise((resolve) => {
+        const url = objectUrl(file);
+        await new Promise((resolve) => {
             loader.loadVPD(url, false, (pose) => {
                 revokeObjectUrl(url);
-                loader.poseAsVpd(item.mesh, pose);
-                toast(`VPD: ${file.name}`);
+                targets.forEach((item) => loader.poseAsVpd(item.mesh, pose));
+                toast(`VPD: ${file.name} → ${targets.length} model${targets.length === 1 ? '' : 's'}`);
                 resolve();
             }, undefined, () => {
                 revokeObjectUrl(url);
@@ -281,18 +206,29 @@ export function applyMotion(file, item = state.active) {
                 resolve();
             });
         });
+        return;
     }
-    return new Promise((resolve) => {
-        loader.loadAnimation(url, item.mesh, (clip) => {
-            revokeObjectUrl(url);
-            const name = file.name.replace(/\.[^.]+$/, '');
-            playMotion(item.motion, clip, name);
-            toast(`VMD: ${file.name}（${Math.round(clip.duration * 10) / 10}秒）`);
-            resolve();
-        }, undefined, () => {
-            revokeObjectUrl(url);
-            toast('VMD の読み込みに失敗しました');
-            resolve();
+    let succeeded = 0;
+    for (const item of targets) {
+        const url = objectUrl(file);
+        const ok = await new Promise((resolve) => {
+            loader.loadAnimation(url, item.mesh, (clip) => {
+                revokeObjectUrl(url);
+                playMotion(item.motion, clip, file.name.replace(/\.[^.]+$/, ''), state.motionBlend, state.loop && state.loopBlend > 0, false);
+                resolve(true);
+            }, undefined, () => {
+                revokeObjectUrl(url);
+                resolve(false);
+            });
         });
-    });
+        if (ok)
+            succeeded += 1;
+    }
+    if (succeeded) {
+        state.elapsed = 0;
+        synchronizeMotions(true);
+    }
+    toast(succeeded
+        ? `VMD: ${file.name} → ${succeeded}/${targets.length} models`
+        : 'VMD の読み込みに失敗しました');
 }

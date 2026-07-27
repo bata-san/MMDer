@@ -1,6 +1,6 @@
-import { $, button } from './dom.js';
+import { $ } from './dom.js';
 import { applyMotion, morphMeshes } from './motion.js';
-import { focusModel, loadModel, removeModel, setActiveModel } from './models.js';
+import { focusModel, loadModel, removeModel, setActiveModel, toggleModelSelection } from './models.js';
 import { removeStoredAsset } from './storage.js';
 import { state } from './state.js';
 function assetRow(asset, action) {
@@ -34,23 +34,38 @@ export function renderLibraries() {
         assets.forEach((asset) => root.append(assetRow(asset, () => action(asset))));
     };
     draw('model', '#model-library', '#model-library-count', 'モデルを追加すると<br/>ここから再読み込みできます', (asset) => { void loadModel(asset.file); });
-    draw('motion', '#motion-library', '#motion-library-count', 'モーションを追加すると<br/>ここから適用できます', (asset) => { void applyMotion(asset.file); });
+    draw('motion', '#motion-library', '#motion-library-count', 'モーションを追加すると<br/>選択モデルへ適用できます', (asset) => { void applyMotion(asset.file); });
 }
 export function renderSceneModels() {
     const root = $('#models');
     root.innerHTML = '';
+    $('#selected-count').textContent = `${state.selectedModels.length} selected`;
     if (!state.models.length) {
         root.innerHTML = '<div class="empty">モデルを読み込むと<br/>ここに表示されます</div>';
         $('#model-count').textContent = '0 models';
         return;
     }
     state.models.forEach((model, index) => {
+        const selected = state.selectedModels.includes(model);
         const row = document.createElement('div');
-        row.className = `asset scene-model ${model === state.active ? 'active' : ''}`;
+        row.className = `asset scene-model ${model === state.active ? 'active' : ''} ${selected ? 'selected' : ''}`;
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.className = 'model-select';
+        check.checked = selected;
+        check.title = '複数選択';
+        check.onchange = () => toggleModelSelection(model, check.checked);
         const select = document.createElement('button');
         select.className = 'asset-open';
-        select.innerHTML = `<span>${String(index + 1).padStart(2, '0')}</span><div><b>${model.name}</b><small>${model.visible ? '表示中' : '非表示'}</small></div>`;
-        select.onclick = () => setActiveModel(model);
+        select.innerHTML = `<span>${String(index + 1).padStart(2, '0')}</span><div><b>${model.name}</b><small>${model.motion.currentName || 'モーションなし'} · ${model.visible ? '表示中' : '非表示'}</small></div>`;
+        select.onclick = (event) => {
+            if (event.ctrlKey || event.metaKey || event.shiftKey) {
+                toggleModelSelection(model, !state.selectedModels.includes(model));
+            }
+            else {
+                setActiveModel(model);
+            }
+        };
         const visibility = document.createElement('button');
         visibility.className = 'scene-action';
         visibility.title = model.visible ? '非表示にする' : '表示する';
@@ -70,7 +85,7 @@ export function renderSceneModels() {
         remove.title = 'シーンから削除';
         remove.textContent = '×';
         remove.onclick = () => removeModel(model);
-        row.append(select, visibility, focus, remove);
+        row.append(check, select, visibility, focus, remove);
         root.append(row);
     });
     $('#model-count').textContent = `${state.models.length} models`;
@@ -91,9 +106,10 @@ export function renderMorphs() {
             groups.set(name, bindings);
         });
     });
-    [...groups.entries()].slice(0, 100).forEach(([name, bindings]) => {
-        const value = bindings.reduce((sum, binding) => sum + binding.mesh.morphTargetInfluences[binding.index], 0) / bindings.length;
+    [...groups.entries()].slice(0, 140).forEach(([name, bindings]) => {
+        const value = bindings.reduce((sum, binding) => sum + Number(binding.mesh.morphTargetInfluences[binding.index] ?? 0), 0) / bindings.length;
         const row = document.createElement('div');
+        row.className = 'parameter-row';
         row.innerHTML = `<label>${name}<output>${Math.round(value * 100)}%</output></label><input type="range" min="0" max="1" step=".01" value="${value}">`;
         const range = row.querySelector('input');
         const valueOutput = row.querySelector('output');
@@ -125,7 +141,6 @@ export function renderMaterials() {
         row.innerHTML = `<input type="checkbox" ${material.visible ? 'checked' : ''}><span>${label}</span>`;
         row.querySelector('input').onchange = (event) => {
             material.visible = event.currentTarget.checked;
-            material.needsUpdate = true;
         };
         root.append(row);
     });

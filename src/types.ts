@@ -1,5 +1,28 @@
 export type AssetKind = 'model' | 'motion' | 'texture';
-export type PhysicsPart = 'hair' | 'cloth' | 'body';
+export type PhysicsPart =
+  | 'hairFront'
+  | 'hairBack'
+  | 'hairSide'
+  | 'skirt'
+  | 'cloth'
+  | 'accessory'
+  | 'chest'
+  | 'torso'
+  | 'hips'
+  | 'arms'
+  | 'legs';
+export type BodyRegion =
+  | 'center'
+  | 'hips'
+  | 'spineLower'
+  | 'spineUpper'
+  | 'shoulderLeft'
+  | 'shoulderRight'
+  | 'neck'
+  | 'head';
+export type MotionScope = 'active' | 'selected' | 'all';
+export type BlinkKind = 'soft' | 'full' | 'double';
+export type InteractionMode = 'select' | 'move' | 'poke' | 'pull';
 
 export interface StoredAsset {
   id: string;
@@ -10,11 +33,6 @@ export interface StoredAsset {
   savedAt: number;
 }
 
-export interface BlinkBinding {
-  node: any;
-  index: number;
-}
-
 export interface MotionController {
   mesh: any;
   mixer: any;
@@ -22,11 +40,51 @@ export interface MotionController {
   actions: Map<string, any>;
   current: any | null;
   currentName: string;
-  proceduralClip: any | null;
-  proceduralAction: any | null;
-  blinkBindings: BlinkBinding[];
-  blinkElapsed: number;
+}
+
+export interface BlinkMorphTarget {
+  node: any;
+  name: string;
+  index: number;
+  lastProcedural: number;
+  baseValue: number;
+}
+
+export interface BoneOffsetBinding {
+  bone: any;
+  name: string;
+  lastOffset: any;
+}
+
+export interface LifeController {
+  mesh: any;
+  phase: number;
+  blinkTargets: BlinkMorphTarget[];
   nextBlinkAt: number;
+  lifeTime: number;
+  blinkStartedAt: number;
+  blinkDuration: number;
+  blinkKind: BlinkKind | null;
+  blinkPeak: number;
+  breathClip: any | null;
+  breathAction: any | null;
+  eyes: BoneOffsetBinding[];
+  body: Partial<Record<BodyRegion, BoneOffsetBinding>>;
+  gazeStartYaw: number;
+  gazeStartPitch: number;
+  gazeYaw: number;
+  gazePitch: number;
+  gazeTargetYaw: number;
+  gazeTargetPitch: number;
+  gazeElapsed: number;
+  gazeDuration: number;
+  nextGazeAt: number;
+  microYaw: number;
+  microPitch: number;
+  microTargetYaw: number;
+  microTargetPitch: number;
+  nextMicroAt: number;
+  swayNoise: Partial<Record<BodyRegion, number>>;
 }
 
 export interface PhysicsRuntime {
@@ -39,12 +97,22 @@ export interface PhysicsRuntime {
 }
 
 export interface SceneModel {
+  id: string;
   mesh: any;
   file: File;
   name: string;
   visible: boolean;
   physics: PhysicsRuntime | null;
   motion: MotionController;
+  life: LifeController;
+}
+
+export interface PhysicsPartSettings {
+  enabled: boolean;
+  response: number;
+  damping: number;
+  gravity: number;
+  wind: number;
 }
 
 export interface PhysicsSettings {
@@ -55,7 +123,7 @@ export interface PhysicsSettings {
   turbulence: number;
   quality: number;
   air: number;
-  parts: Record<PhysicsPart, boolean>;
+  parts: Record<PhysicsPart, PhysicsPartSettings>;
 }
 
 export interface ToonSettings {
@@ -63,9 +131,45 @@ export interface ToonSettings {
   shadowLift: number;
 }
 
+export interface LifeSettings {
+  enabled: boolean;
+  blinkActivity: number;
+  blinkStrength: number;
+  doubleBlinkChance: number;
+  softBlinkChance: number;
+  blinkDuration: number;
+  blinkOnGaze: number;
+  breathRate: number;
+  breathDepth: number;
+  breathVariation: number;
+  gazeActivity: number;
+  gazeRange: number;
+  gazeDwell: number;
+  headFollow: number;
+  microSaccade: number;
+  followPointer: boolean;
+  sway: number;
+  swaySpeed: number;
+  swayIrregularity: number;
+  segments: Record<BodyRegion, number>;
+}
+
+export interface InteractionSettings {
+  mode: InteractionMode;
+  groundLock: boolean;
+  dragResponse: number;
+  pokeStrength: number;
+  pokeRadius: number;
+  pullStrength: number;
+  pullDamping: number;
+  pullRadius: number;
+}
+
 export interface AppState {
   models: SceneModel[];
   active: SceneModel | null;
+  selectedModels: SceneModel[];
+  motionScope: MotionScope;
   duration: number;
   elapsed: number;
   playing: boolean;
@@ -78,11 +182,11 @@ export interface AppState {
   rigHandles: any[];
   physics: boolean;
   motionBlend: number;
-  proceduralMotion: boolean;
-  proceduralWeight: number;
   loopBlend: number;
   physicsSettings: PhysicsSettings;
   toonSettings: ToonSettings;
+  lifeSettings: LifeSettings;
+  interactionSettings: InteractionSettings;
   xrPresenting: boolean;
   renderScale: number;
 }

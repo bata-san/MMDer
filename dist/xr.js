@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { setNotice } from './dom.js';
+import { pokeFromRay } from './interaction.js';
 import { controls, renderer, resizeScene, scene, stage } from './scene.js';
 import { state } from './state.js';
 function setXrStageMode(enabled) {
@@ -25,6 +26,15 @@ function createControllerRay(index) {
     ray.name = `XR_CONTROLLER_RAY_${index}`;
     ray.scale.z = 3;
     controller.add(ray);
+    controller.addEventListener('select', () => {
+        if (state.interactionSettings.mode !== 'poke')
+            return;
+        const xrRaycaster = new THREE.Raycaster();
+        const rotation = new THREE.Matrix4().extractRotation(controller.matrixWorld);
+        xrRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        xrRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(rotation).normalize();
+        pokeFromRay(xrRaycaster);
+    });
     scene.add(controller);
 }
 export function setupXr() {
