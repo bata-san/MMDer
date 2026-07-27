@@ -54,6 +54,7 @@ export function loadModel(file) {
             mesh.position.x = state.models.length * 2.7;
             scene.add(mesh);
             state.models.push(item);
+            recomputeDuration();
             applyOutlineScale();
             applySkinSettings();
             setActiveModel(item);
