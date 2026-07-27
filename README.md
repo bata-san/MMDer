@@ -1,5 +1,13 @@
-# MMD WebGPU WASM Viewer — Cloudflare deployment
+# MMD LAB
 
-This private repository is being used to run an isolated GitHub Actions deployment of the MMD WebGPU/WASM viewer to a temporary Cloudflare Workers account.
+ブラウザで動作するローカル専用の Three.js MMD ビューワーです。
 
-The deployment workflow does not require stored Cloudflare credentials. Its output includes a temporary workers.dev URL and a claim URL that must be claimed within 60 minutes.
+## Features
+
+- PMX / PMD モデル、VMD モーション、VPD ポーズの読み込み
+- フォルダまたは複数ファイルの一括投入と複数モデルの同時表示
+- モーフ操作、再生・ループ、カメラプリセット
+- 呼吸・重心・視線を重ねるプロシージャルフロー
+- トゥーン風アウトライン、ACES トーンマッピング、影、グリッド
+
+モデルデータはブラウザ内でのみ処理され、サーバーへ送信されません。
