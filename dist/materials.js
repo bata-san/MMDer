@@ -9,51 +9,62 @@ export function eachMaterial(root, callback) {
         materials.forEach((material) => callback(material, node));
     });
 }
-function isSkinMaterial(material) {
-    const name = `${material.name ?? ''} ${material.map?.name ?? ''}`;
-    return /肌|顔|face|skin|body|neck|head/i.test(name);
-}
-function toonValues(material) {
-    const skin = isSkinMaterial(material);
-    const factor = skin ? 1 : 0.35;
-    return {
-        specular: state.toonSettings.specular * factor,
-        rim: state.toonSettings.rim * (skin ? 0.75 : 1),
-        shadowLift: state.toonSettings.shadowLift * (skin ? 1 : 0.45),
+function rememberNativeState(material) {
+    if (material.userData.mmdLabNativeMaterial)
+        return material.userData.mmdLabNativeMaterial;
+    const outline = material.userData?.outlineParameters;
+    const native = {
+        specular: material.specular?.clone?.(),
+        shininess: typeof material.shininess === 'number' ? material.shininess : undefined,
+        emissive: material.emissive?.clone?.(),
+        emissiveIntensity: typeof material.emissiveIntensity === 'number' ? material.emissiveIntensity : undefined,
+        outlineAlpha: outline ? Number(outline.alpha) || 1 : undefined,
+        outlineColor: outline?.color ? [...outline.color] : undefined,
     };
+    material.userData.mmdLabNativeMaterial = native;
+    return native;
 }
-function installToonPatch(material) {
-    if (material.userData.mmdLabToonInstalled)
+function restoreNativeShaderHooks(material) {
+    // v4.1.0 briefly installed an incompatible onBeforeCompile patch on MMDToonMaterial.
+    // Freshly loaded materials do not need this, but clearing our cache key keeps hot reloads safe.
+    if (!material.userData.mmdLabToonInstalled)
         return;
-    material.userData.mmdLabToonInstalled = true;
-    const originalCompile = material.onBeforeCompile?.bind(material);
-    const originalCacheKey = material.customProgramCacheKey?.bind(material);
-    material.onBeforeCompile = (shader, renderer) => {
-        originalCompile?.(shader, renderer);
-        const values = toonValues(material);
-        const uniforms = {
-            specular: { value: values.specular },
-            rim: { value: values.rim },
-            shadowLift: { value: values.shadowLift },
-        };
-        shader.uniforms.mmdLabSpecular = uniforms.specular;
-        shader.uniforms.mmdLabRim = uniforms.rim;
-        shader.uniforms.mmdLabShadowLift = uniforms.shadowLift;
-        material.userData.mmdLabToonUniforms = uniforms;
-        const marker = '#include <lights_fragment_end>';
-        if (!shader.fragmentShader.includes(marker))
-            return;
-        shader.fragmentShader = shader.fragmentShader.replace(marker, `${marker}
-      float mmdLabFacing = clamp( dot( normalize( normal ), normalize( geometryViewDir ) ), 0.0, 1.0 );
-      float mmdLabRimLight = pow( 1.0 - mmdLabFacing, 2.4 ) * mmdLabRim;
-      float mmdLabHighlight = pow( mmdLabFacing, 48.0 ) * mmdLabSpecular;
-      reflectedLight.indirectDiffuse += diffuseColor.rgb * mmdLabShadowLift;
-      reflectedLight.indirectSpecular += vec3( mmdLabRimLight + mmdLabHighlight );`);
-    };
-    material.customProgramCacheKey = () => `${originalCacheKey?.() ?? ''}|mmd-lab-toon-v2`;
+    material.onBeforeCompile = () => { };
+    material.customProgramCacheKey = () => '';
+    delete material.userData.mmdLabToonInstalled;
+    delete material.userData.mmdLabToonUniforms;
+}
+function applyNativeMaterialSettings(material) {
+    const native = rememberNativeState(material);
+    const { specular, shadowLift } = state.toonSettings;
+    if (native.specular && material.specular?.copy) {
+        material.specular.copy(native.specular);
+        const scale = 0.55 + specular * 1.45;
+        material.specular.multiplyScalar(scale);
+    }
+    if (native.shininess !== undefined && typeof material.shininess === 'number') {
+        material.shininess = Math.max(0, native.shininess * (0.7 + specular * 1.8));
+    }
+    if (native.emissive && material.emissive?.copy) {
+        material.emissive.copy(native.emissive);
+        if (material.color && shadowLift > 0) {
+            material.emissive.lerp(material.color, Math.min(0.12, shadowLift * 0.3));
+        }
+    }
+    if (native.emissiveIntensity !== undefined && typeof material.emissiveIntensity === 'number') {
+        material.emissiveIntensity = native.emissiveIntensity + shadowLift * 0.35;
+    }
+    const outline = material.userData?.outlineParameters;
+    if (outline) {
+        if (native.outlineAlpha !== undefined)
+            outline.alpha = native.outlineAlpha;
+        if (native.outlineColor)
+            outline.color = [...native.outlineColor];
+    }
 }
 export function configureMmdMaterials(root) {
     eachMaterial(root, (material) => {
+        restoreNativeShaderHooks(material);
         if (material.map)
             material.map.colorSpace = THREE.SRGBColorSpace;
         if (material.emissiveMap)
@@ -67,30 +78,18 @@ export function configureMmdMaterials(root) {
             material.gradientMap.generateMipmaps = false;
             material.gradientMap.needsUpdate = true;
         }
+        // Keep MMDLoader's native transparency, side, blending and depth decisions intact.
         material.depthTest = true;
         material.dithering = true;
         material.toneMapped = true;
-        if (material.opacity < 0.999 || material.alphaMap) {
-            material.transparent = true;
-            material.depthWrite = material.opacity >= 0.75;
-        }
-        else if (material.map && !material.transparent) {
-            material.alphaTest = Math.max(Number(material.alphaTest) || 0, 0.015);
-            material.depthWrite = true;
-        }
         const outline = material.userData?.outlineParameters;
         if (outline) {
             const baseThickness = Math.min(0.008, Math.max(0, Number(outline.thickness) || 0));
             outline.mmdBaseThickness = baseThickness;
             outline.thickness = baseThickness * state.outlineScale;
             outline.visible = outline.visible !== false && baseThickness > 0;
-            outline.alpha = Math.min(0.92, Math.max(0.35, Number(outline.alpha) || 0.75));
-            if (material.color) {
-                const ink = material.color.clone().multiplyScalar(0.16);
-                outline.color = [ink.r, ink.g, ink.b];
-            }
         }
-        installToonPatch(material);
+        applyNativeMaterialSettings(material);
         material.needsUpdate = true;
     });
 }
@@ -105,12 +104,7 @@ export function applyOutlineScale() {
 }
 export function applyToonSettings() {
     state.models.forEach((item) => eachMaterial(item.mesh, (material) => {
-        const values = toonValues(material);
-        const uniforms = material.userData.mmdLabToonUniforms;
-        if (uniforms) {
-            uniforms.specular.value = values.specular;
-            uniforms.rim.value = values.rim;
-            uniforms.shadowLift.value = values.shadowLift;
-        }
+        applyNativeMaterialSettings(material);
+        material.needsUpdate = true;
     }));
 }

@@ -9,7 +9,7 @@
 - 添付の待機・素立ち VMD を標準アイドルとして自動適用
 - モーフ操作、再生・ループ、カメラプリセット
 - 固定ステップ MMD 物理、拘束調整、空気抵抗、風・乱流、部位別制御
-- 材質別トゥーン補助、アウトライン、ACES、HDRI、影、グリッド
+- MMDToonMaterial本来のシェーダーを維持した安全な材質調整、アウトライン、ACES、HDRI、影、グリッド
 - WebXR / VRButton、local-floor、VR向け実寸ステージ、コントローラーレイ
 - XR時の軽量描画とデスクトップ時の自動解像度調整
 
@@ -21,7 +21,7 @@
 
 - `src/scene.ts` / `src/xr.ts`: Three.js、照明、HDRI、WebXR、実寸ステージ
 - `src/storage.ts` / `src/assets.ts`: IndexedDB、ZIP、ファイル分類
-- `src/motion.ts`: 標準VMD、VMD / VPD、クロスフェード
+- `src/motion.ts`: 標準VMD、終端シーム補正、クロスフェード、加算式の呼吸・瞬き
 - `src/physics.ts`: 固定ステップ Ammo.js / MMDPhysics ランタイム
 - `src/models.ts` / `src/materials.ts`: モデル、リグ、トゥーン材質
 - `src/views.ts` / `src/ui.ts`: DOM描画とイベント配線

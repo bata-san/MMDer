@@ -1,7 +1,7 @@
 import { $, input, output } from './dom.js';
-import { recomputeDuration } from './motion.js';
+import { recomputeDuration, updateProceduralMotion } from './motion.js';
 import { updateRigHandles } from './models.js';
-import { resetPhysics, stepPhysics } from './physics.js';
+import { stepPhysics } from './physics.js';
 import { BUILD_VERSION, state } from './state.js';
 import { bindUi } from './ui.js';
 import { refreshStoredAssets } from './storage.js';
@@ -28,13 +28,11 @@ function updateTimeline(): void {
   if (state.elapsed > state.duration) {
     if (state.loop) {
       state.elapsed %= state.duration;
-      state.models.forEach((model) => {
-        model.motion.mixer.setTime(state.elapsed);
-        resetPhysics(model);
-      });
+      // AnimationAction loops internally. Keep the mixer and physics continuous at the seam.
     } else {
       state.elapsed = state.duration;
       state.playing = false;
+      $('#play').textContent = '▶';
     }
   }
   input('#timeline').value = String(state.elapsed / state.duration);
@@ -62,6 +60,7 @@ function animate(): void {
     state.elapsed += delta;
     state.models.forEach((model) => {
       model.motion.mixer.update(delta);
+      updateProceduralMotion(model.motion, delta);
       stepPhysics(model, delta, state.elapsed);
     });
   }

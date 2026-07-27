@@ -10,6 +10,11 @@ export interface StoredAsset {
   savedAt: number;
 }
 
+export interface BlinkBinding {
+  node: any;
+  index: number;
+}
+
 export interface MotionController {
   mesh: any;
   mixer: any;
@@ -17,6 +22,11 @@ export interface MotionController {
   actions: Map<string, any>;
   current: any | null;
   currentName: string;
+  proceduralClip: any | null;
+  proceduralAction: any | null;
+  blinkBindings: BlinkBinding[];
+  blinkElapsed: number;
+  nextBlinkAt: number;
 }
 
 export interface PhysicsRuntime {
@@ -50,7 +60,6 @@ export interface PhysicsSettings {
 
 export interface ToonSettings {
   specular: number;
-  rim: number;
   shadowLift: number;
 }
 
@@ -69,6 +78,9 @@ export interface AppState {
   rigHandles: any[];
   physics: boolean;
   motionBlend: number;
+  proceduralMotion: boolean;
+  proceduralWeight: number;
+  loopBlend: number;
   physicsSettings: PhysicsSettings;
   toonSettings: ToonSettings;
   xrPresenting: boolean;

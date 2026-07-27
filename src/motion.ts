@@ -16,51 +16,247 @@ export function morphMeshes(root: any): any[] {
   return result;
 }
 
+function smoothstep(value: number): number {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
+}
+
+function makeLoopFriendlyClip(source: any, blendDuration: number): any {
+  const clip = source.clone();
+  const duration = Number(clip.duration) || 0;
+  if (duration <= 0 || blendDuration <= 0) return clip;
+
+  clip.tracks.forEach((track: any) => {
+    const times = track.times as ArrayLike<number>;
+    const values = track.values as Float32Array | number[];
+    const count = times.length;
+    const stride = track.getValueSize?.() ?? Math.floor(values.length / Math.max(1, count));
+    if (count < 2 || stride <= 0) return;
+
+    const trackEnd = Number(times[count - 1]);
+    const seam = Math.min(blendDuration, trackEnd * 0.3);
+    if (seam <= 0) return;
+    const seamStart = trackEnd - seam;
+    const first = Array.from(values.slice(0, stride));
+    const quaternionTrack = track instanceof THREE.QuaternionKeyframeTrack || stride === 4 && /quaternion$/i.test(track.name);
+
+    for (let key = 0; key < count; key += 1) {
+      const time = Number(times[key]);
+      if (time < seamStart) continue;
+      const alpha = smoothstep((time - seamStart) / seam);
+      const offset = key * stride;
+      if (quaternionTrack) {
+        const from = new THREE.Quaternion().fromArray(values as any, offset);
+        const to = new THREE.Quaternion().fromArray(first as any, 0);
+        from.slerp(to, alpha).normalize().toArray(values as any, offset);
+      } else {
+        for (let component = 0; component < stride; component += 1) {
+          const current = Number(values[offset + component]);
+          values[offset + component] = current + (first[component] - current) * alpha;
+        }
+      }
+    }
+
+    const lastOffset = (count - 1) * stride;
+    for (let component = 0; component < stride; component += 1) {
+      values[lastOffset + component] = first[component];
+    }
+  });
+
+  clip.name = source.name;
+  return clip;
+}
+
+function findBone(mesh: any, pattern: RegExp): any | null {
+  let match: any | null = null;
+  mesh.traverse((node: any) => {
+    if (!match && node.isBone && pattern.test(node.name)) match = node;
+  });
+  return match;
+}
+
+function quaternionTrack(name: string, times: number[], rotations: Array<[number, number, number]>): any {
+  const values: number[] = [];
+  rotations.forEach(([x, y, z]) => {
+    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
+    values.push(...quaternion.toArray());
+  });
+  return new THREE.QuaternionKeyframeTrack(`.bones[${name}].quaternion`, times, values);
+}
+
+function createProceduralClip(mesh: any): any | null {
+  const duration = 4;
+  const times = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+  const tracks: any[] = [];
+  const upper2 = findBone(mesh, /上半身2|upper.?body.?2/i);
+  const upper = findBone(mesh, /上半身|胸|chest|spine/i);
+  const neck = findBone(mesh, /首|neck/i);
+
+  if (upper) {
+    tracks.push(quaternionTrack(upper.name, times, [
+      [0, 0, 0], [0.003, 0, 0.001], [0.006, 0, 0.002], [0.003, 0, 0.001],
+      [0, 0, 0], [-0.002, 0, -0.001], [-0.004, 0, -0.002], [-0.002, 0, -0.001], [0, 0, 0],
+    ]));
+  }
+  if (upper2) {
+    tracks.push(quaternionTrack(upper2.name, times, [
+      [0, 0, 0], [0.002, 0.001, 0], [0.004, 0.002, 0], [0.002, 0.001, 0],
+      [0, 0, 0], [-0.001, -0.001, 0], [-0.003, -0.002, 0], [-0.001, -0.001, 0], [0, 0, 0],
+    ]));
+  }
+  if (neck) {
+    tracks.push(quaternionTrack(neck.name, times, [
+      [0, 0, 0], [0, 0.001, 0], [0.001, 0.002, 0], [0, 0.001, 0],
+      [0, 0, 0], [0, -0.001, 0], [-0.001, -0.002, 0], [0, -0.001, 0], [0, 0, 0],
+    ]));
+  }
+  if (!tracks.length) return null;
+
+  const clip = new THREE.AnimationClip('Procedural breathing layer', duration, tracks);
+  THREE.AnimationUtils.makeClipAdditive(clip, 0, clip, 30);
+  return clip;
+}
+
+function blinkBindings(mesh: any): Array<{ node: any; index: number }> {
+  const bindings: Array<{ node: any; index: number }> = [];
+  morphMeshes(mesh).forEach((node) => {
+    Object.entries(node.morphTargetDictionary as Record<string, number>).forEach(([name, index]) => {
+      if (/まばたき|blink|eye.?close/i.test(name)) bindings.push({ node, index: Number(index) });
+    });
+  });
+  return bindings;
+}
+
 export function createMotionController(mesh: any): MotionController {
+  const mixer = new THREE.AnimationMixer(mesh);
+  const proceduralClip = createProceduralClip(mesh);
+  const proceduralAction = proceduralClip ? mixer.clipAction(proceduralClip) : null;
+  if (proceduralAction) {
+    proceduralAction.setLoop(THREE.LoopRepeat, Infinity);
+    proceduralAction.setEffectiveWeight(state.proceduralMotion ? state.proceduralWeight : 0);
+    proceduralAction.play();
+  }
   return {
     mesh,
-    mixer: new THREE.AnimationMixer(mesh),
+    mixer,
     clips: new Map(),
     actions: new Map(),
     current: null,
     currentName: '',
+    proceduralClip,
+    proceduralAction,
+    blinkBindings: blinkBindings(mesh),
+    blinkElapsed: 0,
+    nextBlinkAt: 2.5 + Math.random() * 2,
   };
 }
 
 export function playMotion(
   controller: MotionController,
-  clip: any,
-  name = clip.name || 'VMD',
+  sourceClip: any,
+  name = sourceClip.name || 'VMD',
   blend = state.motionBlend,
+  loopFriendly = false,
 ): void {
+  const clip = loopFriendly ? makeLoopFriendlyClip(sourceClip, state.loopBlend) : sourceClip;
   controller.clips.set(name, clip);
-  const next = controller.actions.get(name) ?? controller.mixer.clipAction(clip);
+  const next = controller.mixer.clipAction(clip);
   controller.actions.set(name, next);
   next.enabled = true;
   next.reset();
-  next.setLoop(THREE.LoopRepeat, Infinity);
-  next.clampWhenFinished = false;
+  next.setLoop(state.loop ? THREE.LoopRepeat : THREE.LoopOnce, state.loop ? Infinity : 1);
+  next.clampWhenFinished = !state.loop;
   next.setEffectiveWeight(1).setEffectiveTimeScale(1).play();
-  if (controller.current && controller.current !== next) {
-    controller.current.crossFadeTo(next, Math.max(0.04, blend), false);
+
+  const previous = controller.current;
+  if (previous && previous !== next) {
+    previous.stopFading();
+    next.stopFading();
+    previous.crossFadeTo(next, Math.max(0.04, blend), true);
   }
+
   controller.current = next;
   controller.currentName = name;
   controller.mesh.userData.motionName = name;
+  state.elapsed = 0;
   recomputeDuration();
+}
+
+export function setMotionLooping(enabled: boolean): void {
+  state.models.forEach((model) => {
+    const action = model.motion.current;
+    if (!action) return;
+    action.setLoop(enabled ? THREE.LoopRepeat : THREE.LoopOnce, enabled ? Infinity : 1);
+    action.clampWhenFinished = !enabled;
+  });
+}
+
+export function seekMotions(time: number): void {
+  state.models.forEach((model) => {
+    const controller = model.motion;
+    const action = controller.current;
+    if (action) {
+      const duration = Number(action.getClip?.().duration) || state.duration || 1;
+      action.time = state.loop ? time % duration : Math.min(time, duration);
+      action.paused = false;
+    }
+    if (controller.proceduralAction && controller.proceduralClip) {
+      controller.proceduralAction.time = time % controller.proceduralClip.duration;
+    }
+    controller.mixer.update(0);
+  });
+}
+
+export function setProceduralMotion(enabled: boolean, weight = state.proceduralWeight): void {
+  state.proceduralMotion = enabled;
+  state.proceduralWeight = weight;
+  state.models.forEach((model) => {
+    const action = model.motion.proceduralAction;
+    if (!action) return;
+    action.enabled = true;
+    action.setEffectiveWeight(enabled ? weight : 0);
+  });
+}
+
+export function updateProceduralMotion(controller: MotionController, delta: number): void {
+  if (controller.proceduralAction) {
+    controller.proceduralAction.setEffectiveWeight(state.proceduralMotion ? state.proceduralWeight : 0);
+  }
+  if (!state.proceduralMotion || !controller.blinkBindings.length) return;
+
+  controller.blinkElapsed += delta;
+  const blinkAge = controller.blinkElapsed - controller.nextBlinkAt;
+  if (blinkAge < 0) return;
+  if (blinkAge > 0.18) {
+    controller.nextBlinkAt = controller.blinkElapsed + 2.8 + Math.random() * 4.2;
+    return;
+  }
+
+  const phase = Math.sin(Math.PI * blinkAge / 0.18);
+  const strength = Math.min(0.9, state.proceduralWeight * 4.2);
+  controller.blinkBindings.forEach(({ node, index }) => {
+    const base = Number(node.morphTargetInfluences[index]) || 0;
+    node.morphTargetInfluences[index] = base + (1 - base) * phase * strength;
+  });
 }
 
 export function recomputeDuration(): void {
   state.duration = state.models.reduce((maximum, model) => {
-    const durations = [...model.motion.clips.values()].map((clip) => Number(clip.duration) || 0);
-    return Math.max(maximum, ...durations, 0);
+    const duration = Number(model.motion.current?.getClip?.().duration) || 0;
+    return Math.max(maximum, duration);
   }, 0);
 }
 
-function loadAnimationUrl(url: string, item: SceneModel, name: string, blend: number): Promise<boolean> {
+function loadAnimationUrl(
+  url: string,
+  item: SceneModel,
+  name: string,
+  blend: number,
+  loopFriendly = false,
+): Promise<boolean> {
   return new Promise((resolve) => {
     loader.loadAnimation(url, item.mesh, (clip: any) => {
-      playMotion(item.motion, clip, name, blend);
+      playMotion(item.motion, clip, name, blend, loopFriendly);
       resolve(true);
     }, undefined, (error: unknown) => {
       console.warn(`Motion load failed: ${name}`, error);
@@ -82,7 +278,7 @@ async function defaultIdleObjectUrl(): Promise<string> {
 export async function loadDefaultMotion(item: SceneModel): Promise<boolean> {
   try {
     const url = await defaultIdleObjectUrl();
-    const loaded = await loadAnimationUrl(url, item, DEFAULT_IDLE_NAME, 0.08);
+    const loaded = await loadAnimationUrl(url, item, DEFAULT_IDLE_NAME, 0.08, true);
     if (!loaded) toast('標準待機VMDを読み込めませんでした');
     return loaded;
   } catch (error) {

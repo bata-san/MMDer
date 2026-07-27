@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { importAssets } from './assets.js';
 import { $, $all, button, input, output } from './dom.js';
 import { applyOutlineScale, applyToonSettings } from './materials.js';
-import { morphMeshes } from './motion.js';
+import { morphMeshes, seekMotions, setMotionLooping, setProceduralMotion } from './motion.js';
 import { attachRigHandleFromPointer, clearModels, onActiveModelChange, onModelsChange, setRigEditing } from './models.js';
 import { applyPhysicsSettings, disablePhysics, enablePhysics, resetAllPhysics } from './physics.js';
 import { camera, canvas, controls, grid, loadHdr, pointer, raycaster, renderer, scene, setEnvironmentStrength } from './scene.js';
@@ -31,27 +31,37 @@ function bindFileInputs() {
 }
 function bindPlayback() {
     button('#play').onclick = (event) => {
+        if (!state.playing && state.duration && state.elapsed >= state.duration - 0.001) {
+            state.elapsed = 0;
+            seekMotions(0);
+            resetAllPhysics();
+        }
         state.playing = !state.playing;
         event.currentTarget.textContent = state.playing ? '❚❚' : '▶';
     };
     button('#loop').onclick = (event) => {
         state.loop = !state.loop;
+        setMotionLooping(state.loop);
         event.currentTarget.classList.toggle('active', state.loop);
     };
     input('#timeline').oninput = (event) => {
         if (!state.duration)
             return;
         state.elapsed = Number(event.currentTarget.value) * state.duration;
-        state.models.forEach((model) => {
-            model.motion.mixer.setTime(state.elapsed);
-            model.physics?.engine?.reset?.();
-            if (model.physics)
-                model.physics.accumulator = 0;
-        });
+        seekMotions(state.elapsed);
+        resetAllPhysics();
     };
     input('#motion-blend').oninput = (event) => {
         state.motionBlend = Number(event.currentTarget.value);
         output('#motion-blend-value').textContent = `${state.motionBlend.toFixed(2)}s`;
+    };
+    input('#procedural-motion').onchange = (event) => {
+        setProceduralMotion(event.currentTarget.checked);
+    };
+    input('#procedural-weight').oninput = (event) => {
+        const value = Number(event.currentTarget.value);
+        setProceduralMotion(input('#procedural-motion').checked, value);
+        output('#procedural-weight-value').textContent = value.toFixed(2);
     };
 }
 function bindRendering() {
@@ -162,7 +172,6 @@ function bindPanels() {
     });
     const toonControls = {
         specular: 'specular',
-        rim: 'rim',
         'shadow-lift': 'shadowLift',
     };
     Object.entries(toonControls)
