@@ -1,9 +1,10 @@
 name: Apply verified motion stabilization
 
 on:
-  push:
+  pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -30,6 +31,7 @@ jobs:
           npm run check
           git diff --check
       - name: Commit validated files and clean staging
+        if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: |
           set -euo pipefail
