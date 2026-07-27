@@ -1,0 +1,66 @@
+name: Deploy Cloudflare Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-cloudflare-production.yml'
+      - 'payload/**'
+      - 'runtime-patch/**'
+      - 'production-deploy.trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require Cloudflare credentials
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Missing CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Missing CLOUDFLARE_API_TOKEN'; exit 1; }
+
+      - name: Reconstruct and patch deployment bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/part-* > mmd-dist.tar.gz.b64
+          base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
+          echo "9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a  mmd-dist.tar.gz" | sha256sum --check --strict
+          tar -xzf mmd-dist.tar.gz
+          cp runtime-patch/main.js dist/public/main.js
+          node --check dist/public/main.js
+          test -f dist/index.html
+          test -f dist/public/mmd_core.wasm
+          test -f wrangler.jsonc
+
+      - name: Deploy to selected Cloudflare account
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CI: 'true'
+          NO_COLOR: '1'
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.102.0 deploy 2>&1 | tee deploy-production.log
+
+      - name: Upload deployment log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-production-deploy-log
+          path: deploy-production.log
+          if-no-files-found: warn
+          retention-days: 7
