@@ -1,23 +1,32 @@
 import * as THREE from 'three';
 import { importAssets } from './assets.js';
 import { $, $all, button, input, output } from './dom.js';
-import { applyOutlineScale, applySkinSettings } from './materials.js';
+import { applyOutlineScale, applyToonSettings } from './materials.js';
 import { morphMeshes } from './motion.js';
 import { attachRigHandleFromPointer, clearModels, onActiveModelChange, onModelsChange, setRigEditing } from './models.js';
-import { applyPhysicsSettings, enablePhysics } from './physics.js';
+import { applyPhysicsSettings, disablePhysics, enablePhysics, resetAllPhysics } from './physics.js';
 import { camera, canvas, controls, grid, loadHdr, pointer, raycaster, renderer, scene, setEnvironmentStrength } from './scene.js';
 import { state } from './state.js';
-import { renderActivePanels, renderLibraries, renderMaterials, renderMorphs, showAllMaterials } from './views.js';
+import { renderActivePanels, renderLibraries, renderMorphs, showAllMaterials } from './views.js';
 function bindFileInputs() {
     button('#open-models').onclick = () => input('#models-file').click();
     button('#open-motions').onclick = () => input('#motions-file').click();
     button('#open-folder').onclick = () => input('#folder').click();
-    input('#models-file').onchange = (event) => { const files = event.currentTarget.files; if (files)
-        void importAssets(files, true).then(renderLibraries); };
-    input('#motions-file').onchange = (event) => { const files = event.currentTarget.files; if (files)
-        void importAssets(files, false).then(renderLibraries); };
-    input('#folder').onchange = (event) => { const files = event.currentTarget.files; if (files)
-        void importAssets(files, false).then(renderLibraries); };
+    input('#models-file').onchange = (event) => {
+        const files = event.currentTarget.files;
+        if (files)
+            void importAssets(files, true).then(renderLibraries);
+    };
+    input('#motions-file').onchange = (event) => {
+        const files = event.currentTarget.files;
+        if (files)
+            void importAssets(files, false).then(renderLibraries);
+    };
+    input('#folder').onchange = (event) => {
+        const files = event.currentTarget.files;
+        if (files)
+            void importAssets(files, false).then(renderLibraries);
+    };
     button('#clear-models').onclick = clearModels;
 }
 function bindPlayback() {
@@ -33,9 +42,13 @@ function bindPlayback() {
         if (!state.duration)
             return;
         state.elapsed = Number(event.currentTarget.value) * state.duration;
-        state.models.forEach((model) => model.motion.mixer.setTime(state.elapsed));
+        state.models.forEach((model) => {
+            model.motion.mixer.setTime(state.elapsed);
+            model.physics?.engine?.reset?.();
+            if (model.physics)
+                model.physics.accumulator = 0;
+        });
     };
-    input('#living-motion').onchange = (event) => { state.livingMotion = event.currentTarget.checked; };
     input('#motion-blend').oninput = (event) => {
         state.motionBlend = Number(event.currentTarget.value);
         output('#motion-blend-value').textContent = `${state.motionBlend.toFixed(2)}s`;
@@ -59,8 +72,11 @@ function bindRendering() {
         output('#exposure-value').textContent = String(renderer.toneMappingExposure);
     };
     button('#open-hdri').onclick = () => input('#hdri').click();
-    input('#hdri').onchange = (event) => { const file = event.currentTarget.files?.[0]; if (file)
-        loadHdr(file); };
+    input('#hdri').onchange = (event) => {
+        const file = event.currentTarget.files?.[0];
+        if (file)
+            loadHdr(file);
+    };
     input('#env-intensity').oninput = (event) => {
         const value = Number(event.currentTarget.value);
         setEnvironmentStrength(value);
@@ -79,7 +95,10 @@ function bindPhysics() {
         state.physics = event.currentTarget.checked;
         if (state.physics)
             void Promise.all(state.models.map((model) => enablePhysics(model)));
+        else
+            state.models.forEach(disablePhysics);
     };
+    button('#physics-reset').onclick = resetAllPhysics;
     const scalarSettings = ['stiffness', 'damping', 'gravity', 'wind', 'turbulence', 'air'];
     scalarSettings.forEach((key) => {
         input(`#${key}`).oninput = (event) => {
@@ -98,9 +117,9 @@ function bindPhysics() {
     $all('[data-physics-preset]').forEach((element) => {
         element.onclick = () => {
             const presets = {
-                hair: { stiffness: 0.72, damping: 0.12, gravity: 0.9 },
-                cloth: { stiffness: 0.85, damping: 0.07, gravity: 1.15 },
-                body: { stiffness: 0.5, damping: 0.2, gravity: 1 },
+                hair: { stiffness: 0.48, damping: 0.16, gravity: 0.88, air: 0.42 },
+                cloth: { stiffness: 0.7, damping: 0.12, gravity: 1.08, air: 0.3 },
+                body: { stiffness: 0.82, damping: 0.28, gravity: 1, air: 0.18 },
             };
             const preset = presets[element.dataset.physicsPreset];
             Object.assign(state.physicsSettings, preset);
@@ -141,13 +160,18 @@ function bindPanels() {
             return;
         attachRigHandleFromPointer(event.clientX, event.clientY, raycaster, pointer, canvas);
     });
-    ['specular', 'wetness', 'roughness-map'].forEach((id) => {
+    const toonControls = {
+        specular: 'specular',
+        rim: 'rim',
+        'shadow-lift': 'shadowLift',
+    };
+    Object.entries(toonControls)
+        .forEach(([id, key]) => {
         input(`#${id}`).oninput = (event) => {
-            const key = id === 'roughness-map' ? 'roughnessMap' : id;
             const value = Number(event.currentTarget.value);
-            state.skinSettings[key] = value;
+            state.toonSettings[key] = value;
             output(`#${id}-value`).textContent = value.toFixed(2);
-            applySkinSettings();
+            applyToonSettings();
         };
     });
 }

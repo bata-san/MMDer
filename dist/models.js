@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
-import { applyOutlineScale, applySkinSettings, configureMmdMaterials } from './materials.js';
-import { createMotionController, recomputeDuration } from './motion.js';
-import { controls, frameObject, loader, scene, transform } from './scene.js';
+import { applyOutlineScale, applyToonSettings, configureMmdMaterials } from './materials.js';
+import { createMotionController, loadDefaultMotion, recomputeDuration } from './motion.js';
+import { enablePhysics } from './physics.js';
+import { controls, frameObject, loader, scene, stage, transform } from './scene.js';
 import { state } from './state.js';
 const activeListeners = new Set();
 const modelsListeners = new Set();
@@ -14,10 +15,6 @@ export function onModelsChange(listener) {
     modelsListeners.add(listener);
     return () => modelsListeners.delete(listener);
 }
-function emitChanges() {
-    modelsListeners.forEach((listener) => listener());
-    activeListeners.forEach((listener) => listener(state.active));
-}
 export function setActiveModel(item) {
     state.active = item;
     setupRigHandles(item);
@@ -28,13 +25,12 @@ export function loadModel(file) {
     return new Promise((resolve) => {
         setNotice('LOADING MODEL…');
         const url = objectUrl(file);
-        loader.load(url, (mesh) => {
+        loader.load(url, async (mesh) => {
             revokeObjectUrl(url);
             mesh.name = file.name;
             mesh.frustumCulled = false;
             mesh.castShadow = true;
             mesh.receiveShadow = false;
-            mesh.userData.motionPhase = Math.random() * Math.PI * 2;
             mesh.traverse((node) => {
                 if (!node.isMesh)
                     return;
@@ -52,15 +48,18 @@ export function loadModel(file) {
                 motion: createMotionController(mesh),
             };
             mesh.position.x = state.models.length * 2.7;
-            scene.add(mesh);
+            stage.add(mesh);
             state.models.push(item);
+            const defaultLoaded = await loadDefaultMotion(item);
             recomputeDuration();
             applyOutlineScale();
-            applySkinSettings();
+            applyToonSettings();
+            if (state.physics)
+                await enablePhysics(item);
             setActiveModel(item);
             frameObject(mesh);
             setNotice();
-            toast(`${file.name} — Default MMD Idle`);
+            toast(defaultLoaded ? `${file.name} — 待機・素立ち VMD` : `${file.name} — モーションなし`);
             resolve(item);
         }, undefined, (error) => {
             revokeObjectUrl(url);
@@ -76,8 +75,9 @@ export function focusModel(item) {
     frameObject(item.mesh);
 }
 export function disposeModel(item) {
-    scene.remove(item.mesh);
+    stage.remove(item.mesh);
     item.motion.mixer.stopAllAction();
+    item.physics?.engine?.reset?.();
     item.mesh.traverse((node) => {
         node.geometry?.dispose();
         if (!node.material)

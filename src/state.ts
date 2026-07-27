@@ -1,6 +1,6 @@
 import type { AppState } from './types.js';
 
-export const BUILD_VERSION = 'v4.0.0';
+export const BUILD_VERSION = 'v4.1.0';
 
 export const state: AppState = {
   models: [],
@@ -17,16 +17,17 @@ export const state: AppState = {
   rigHandles: [],
   physics: false,
   motionBlend: 0.22,
-  livingMotion: true,
   physicsSettings: {
-    stiffness: 0.5,
-    damping: 0.2,
+    stiffness: 0.62,
+    damping: 0.18,
     gravity: 1,
     wind: 0,
     turbulence: 0,
     quality: 3,
-    air: 0.25,
+    air: 0.28,
     parts: { hair: true, cloth: true, body: true },
   },
-  skinSettings: { specular: 0.2, wetness: 0, roughnessMap: 1 },
+  toonSettings: { specular: 0.16, rim: 0.22, shadowLift: 0.08 },
+  xrPresenting: false,
+  renderScale: 1,
 };

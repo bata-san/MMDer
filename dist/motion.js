@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { extension, objectUrl, revokeObjectUrl, toast } from './dom.js';
 import { loader } from './scene.js';
 import { state } from './state.js';
+export const DEFAULT_IDLE_URL = new URL('../assets/default-idle.vmd', import.meta.url).href;
+export const DEFAULT_IDLE_NAME = '待機・素立ち';
+let cachedDefaultIdleObjectUrl = null;
 export function morphMeshes(root) {
     const result = [];
     root?.traverse((node) => {
@@ -10,75 +13,25 @@ export function morphMeshes(root) {
     });
     return result;
 }
-function defaultIdleClip(mesh) {
-    const times = [0, 1, 2, 3, 4];
-    const tracks = [
-        new THREE.NumberKeyframeTrack('.position[y]', times, [0, 0.06, 0, -0.04, 0]),
-        new THREE.NumberKeyframeTrack('.rotation[y]', times, [0, 0.035, 0, -0.035, 0]),
-    ];
-    const bones = [];
-    mesh.traverse((node) => { if (node.isBone)
-        bones.push(node); });
-    const targets = [
-        { pattern: /上半身2|upper.?body.?2/i, x: 0.035, y: 0.012 },
-        { pattern: /上半身|胸|chest|spine/i, x: 0.055, y: 0.02 },
-        { pattern: /首|neck/i, x: 0.03, y: 0.028 },
-        { pattern: /頭|head/i, x: 0.022, y: 0.04 },
-    ];
-    for (const target of targets) {
-        const bone = bones.find((node) => target.pattern.test(node.name));
-        if (!bone)
-            continue;
-        const values = [];
-        const base = bone.quaternion.clone();
-        times.forEach((_, index) => {
-            const phase = Math.sin(index * Math.PI / 2);
-            const offset = new THREE.Quaternion().setFromEuler(new THREE.Euler(phase * target.x, phase * target.y, 0));
-            values.push(...base.clone().multiply(offset).normalize().toArray());
-        });
-        tracks.push(new THREE.QuaternionKeyframeTrack(`.bones[${bone.name}].quaternion`, times, values));
-    }
-    return new THREE.AnimationClip('Default MMD Idle', 4, tracks);
-}
 export function createMotionController(mesh) {
-    const controller = {
+    return {
         mesh,
         mixer: new THREE.AnimationMixer(mesh),
         clips: new Map(),
         actions: new Map(),
         current: null,
         currentName: '',
-        breath: 0,
-        head: 0,
-        blink: 0,
-        nextBlink: 2.5,
-        bones: {},
-        morphs: [],
     };
-    mesh.traverse((node) => {
-        if (!node.isBone)
-            return;
-        if (!controller.bones.chest && /上半身|胸|chest|spine/i.test(node.name))
-            controller.bones.chest = node;
-        if (!controller.bones.head && /頭|head|neck/i.test(node.name))
-            controller.bones.head = node;
-    });
-    for (const node of morphMeshes(mesh)) {
-        for (const [name, indexValue] of Object.entries(node.morphTargetDictionary)) {
-            if (!/まばたき|blink|eye.?close/i.test(name))
-                continue;
-            const index = Number(indexValue);
-            controller.morphs.push({ node, index, base: node.morphTargetInfluences[index] || 0 });
-        }
-    }
-    playMotion(controller, defaultIdleClip(mesh), 'Default Idle', 0.2);
-    return controller;
 }
 export function playMotion(controller, clip, name = clip.name || 'VMD', blend = state.motionBlend) {
     controller.clips.set(name, clip);
     const next = controller.actions.get(name) ?? controller.mixer.clipAction(clip);
     controller.actions.set(name, next);
-    next.reset().setEffectiveWeight(1).setEffectiveTimeScale(1).play();
+    next.enabled = true;
+    next.reset();
+    next.setLoop(THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = false;
+    next.setEffectiveWeight(1).setEffectiveTimeScale(1).play();
     if (controller.current && controller.current !== next) {
         controller.current.crossFadeTo(next, Math.max(0.04, blend), false);
     }
@@ -89,37 +42,45 @@ export function playMotion(controller, clip, name = clip.name || 'VMD', blend = 
 }
 export function recomputeDuration() {
     state.duration = state.models.reduce((maximum, model) => {
-        const durations = [...model.motion.clips.values()].map((clip) => clip.duration);
+        const durations = [...model.motion.clips.values()].map((clip) => Number(clip.duration) || 0);
         return Math.max(maximum, ...durations, 0);
     }, 0);
 }
-export function updateLivingMotion(controller, delta, time) {
-    if (!state.livingMotion)
-        return;
-    const chest = controller.bones.chest;
-    const head = controller.bones.head;
-    const phase = Number(controller.mesh.userData.motionPhase ?? 0);
-    if (chest) {
-        chest.rotation.x -= controller.breath;
-        controller.breath = Math.sin(time * 1.35 + phase) * 0.012;
-        chest.rotation.x += controller.breath;
-    }
-    if (head) {
-        head.rotation.y -= controller.head;
-        controller.head = Math.sin(time * 0.55 + phase * 1.7) * 0.008;
-        head.rotation.y += controller.head;
-    }
-    if (!controller.morphs.length)
-        return;
-    controller.blink += delta;
-    if (controller.blink > controller.nextBlink) {
-        controller.blink = 0;
-        controller.nextBlink = 2.8 + Math.random() * 4.5;
-    }
-    const blink = controller.blink < 0.18 ? Math.sin(Math.PI * controller.blink / 0.18) : 0;
-    controller.morphs.forEach(({ node, index, base }) => {
-        node.morphTargetInfluences[index] = Math.max(0, Math.min(1, base + blink));
+function loadAnimationUrl(url, item, name, blend) {
+    return new Promise((resolve) => {
+        loader.loadAnimation(url, item.mesh, (clip) => {
+            playMotion(item.motion, clip, name, blend);
+            resolve(true);
+        }, undefined, (error) => {
+            console.warn(`Motion load failed: ${name}`, error);
+            resolve(false);
+        });
     });
+}
+async function defaultIdleObjectUrl() {
+    if (cachedDefaultIdleObjectUrl)
+        return cachedDefaultIdleObjectUrl;
+    const encoded = (await fetch(DEFAULT_IDLE_URL)).text().then((text) => text.trim());
+    const binary = atob(await encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1)
+        bytes[index] = binary.charCodeAt(index);
+    cachedDefaultIdleObjectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    return cachedDefaultIdleObjectUrl;
+}
+export async function loadDefaultMotion(item) {
+    try {
+        const url = await defaultIdleObjectUrl();
+        const loaded = await loadAnimationUrl(url, item, DEFAULT_IDLE_NAME, 0.08);
+        if (!loaded)
+            toast('標準待機VMDを読み込めませんでした');
+        return loaded;
+    }
+    catch (error) {
+        console.warn('Default VMD decode failed', error);
+        toast('標準待機VMDを読み込めませんでした');
+        return false;
+    }
 }
 export function applyMotion(file, item = state.active) {
     if (!item) {

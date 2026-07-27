@@ -1,34 +1,40 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { $, objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
 import { state } from './state.js';
 const canvas = $('#scene');
-const renderRatio = () => Math.min(window.devicePixelRatio, 2);
+const desktopPixelRatio = () => Math.min(window.devicePixelRatio, 1.75) * state.renderScale;
 export const clock = new THREE.Clock();
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xf1ece5);
-export const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 1000);
+export const stage = new THREE.Group();
+stage.name = 'MMD_STAGE';
+scene.add(stage);
+export const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.05, 1000);
 camera.position.set(8, 5.4, 12);
 export const renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
     powerPreference: 'high-performance',
+    alpha: false,
 });
-renderer.setPixelRatio(renderRatio());
+renderer.setPixelRatio(desktopPixelRatio());
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1;
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
 export const effect = new OutlineEffect(renderer, {
     defaultThickness: 0.0028,
-    defaultColor: [0.04, 0.05, 0.07],
-    defaultAlpha: 0.7,
+    defaultColor: [0.035, 0.04, 0.055],
+    defaultAlpha: 0.78,
     defaultKeepAlive: true,
 });
 export const controls = new OrbitControls(camera, canvas);
@@ -79,31 +85,34 @@ transform.addEventListener('dragging-changed', (event) => {
 scene.add(transform);
 export const raycaster = new THREE.Raycaster();
 export const pointer = new THREE.Vector2();
-scene.add(new THREE.AmbientLight(0xfff3e2, 0.3));
-export const environmentLight = new THREE.HemisphereLight(0xf7f5f0, 0xc4cbd3, 0);
+scene.add(new THREE.AmbientLight(0xfff4e8, 0.22));
+export const environmentLight = new THREE.HemisphereLight(0xf7f5f0, 0xb8c2d2, 0.18);
 scene.add(environmentLight);
-const key = new THREE.DirectionalLight(0xffd7b0, 1.25);
-key.position.set(3, 4, 5);
+const key = new THREE.DirectionalLight(0xffd7b0, 1.18);
+key.position.set(3, 5, 5);
 key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.left = key.shadow.camera.bottom = -15;
-key.shadow.camera.right = key.shadow.camera.top = 15;
-key.shadow.bias = -0.00015;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.left = key.shadow.camera.bottom = -16;
+key.shadow.camera.right = key.shadow.camera.top = 16;
+key.shadow.bias = -0.00012;
 key.shadow.normalBias = 0.035;
 key.shadow.radius = 2;
 scene.add(key);
-const fill = new THREE.DirectionalLight(0xffe6c7, 0.28);
-fill.position.set(-4, 3, -3);
+const fill = new THREE.DirectionalLight(0xcfe1ff, 0.28);
+fill.position.set(-5, 3, 1);
 scene.add(fill);
-export const floor = new THREE.Mesh(new THREE.CircleGeometry(20, 64), new THREE.MeshStandardMaterial({ color: 0xe9e1d8, roughness: 0.82 }));
+const rim = new THREE.DirectionalLight(0xfff2df, 0.52);
+rim.position.set(-2, 5, -6);
+scene.add(rim);
+export const floor = new THREE.Mesh(new THREE.CircleGeometry(20, 64), new THREE.MeshStandardMaterial({ color: 0xe9e1d8, roughness: 0.88, metalness: 0 }));
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 floor.material.userData.outlineParameters = { visible: false };
-scene.add(floor);
+stage.add(floor);
 export const grid = new THREE.GridHelper(32, 32, 0xc8b9ad, 0xd9cec4);
 grid.position.y = 0.012;
 grid.material.userData.outlineParameters = { visible: false };
-scene.add(grid);
+stage.add(grid);
 const textureManager = new THREE.LoadingManager();
 textureManager.setURLModifier((request) => {
     const clean = decodeURIComponent(request).replace(/\\/g, '/').replace(/^.*mmd\//, '');
@@ -141,7 +150,7 @@ export function frameObject(object) {
     controls.update();
 }
 function applyEnvironmentLight() {
-    environmentLight.intensity = state.environment ? 0.12 + state.environmentStrength * 0.38 : 0;
+    environmentLight.intensity = state.environment ? 0.12 + state.environmentStrength * 0.32 : 0.18;
 }
 export function applyHdr(texture, label, notify = true) {
     const environment = pmrem.fromEquirectangular(texture).texture;
@@ -177,11 +186,23 @@ export function setEnvironmentStrength(value) {
     scene.environmentIntensity = value;
     applyEnvironmentLight();
 }
+export function setRenderScale(value) {
+    state.renderScale = Math.max(0.7, Math.min(1, value));
+    if (!state.xrPresenting)
+        renderer.setPixelRatio(desktopPixelRatio());
+}
 export function resizeScene() {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(renderRatio());
+    if (!state.xrPresenting)
+        renderer.setPixelRatio(desktopPixelRatio());
     renderer.setSize(innerWidth, innerHeight);
+}
+export function renderScene() {
+    if (state.outline && !state.xrPresenting)
+        effect.render(scene, camera);
+    else
+        renderer.render(scene, camera);
 }
 export function loadDefaultHdr() {
     new RGBELoader().load('https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/white_studio_05_1k.hdr', (texture) => applyHdr(texture, 'Poly Haven — White Studio 05 (CC0)', false), undefined, () => { $('#hdri-name').textContent = '標準 HDRI を読み込めませんでした'; });

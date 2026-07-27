@@ -10,12 +10,6 @@ export interface StoredAsset {
   savedAt: number;
 }
 
-export interface BlinkBinding {
-  node: any;
-  index: number;
-  base: number;
-}
-
 export interface MotionController {
   mesh: any;
   mixer: any;
@@ -23,12 +17,15 @@ export interface MotionController {
   actions: Map<string, any>;
   current: any | null;
   currentName: string;
-  breath: number;
-  head: number;
-  blink: number;
-  nextBlink: number;
-  bones: { chest?: any; head?: any };
-  morphs: BlinkBinding[];
+}
+
+export interface PhysicsRuntime {
+  engine: any;
+  accumulator: number;
+  fixedStep: number;
+  maxSubSteps: number;
+  warmupSteps: number;
+  enabled: boolean;
 }
 
 export interface SceneModel {
@@ -36,7 +33,7 @@ export interface SceneModel {
   file: File;
   name: string;
   visible: boolean;
-  physics: any | null;
+  physics: PhysicsRuntime | null;
   motion: MotionController;
 }
 
@@ -51,10 +48,10 @@ export interface PhysicsSettings {
   parts: Record<PhysicsPart, boolean>;
 }
 
-export interface SkinSettings {
+export interface ToonSettings {
   specular: number;
-  wetness: number;
-  roughnessMap: number;
+  rim: number;
+  shadowLift: number;
 }
 
 export interface AppState {
@@ -72,7 +69,8 @@ export interface AppState {
   rigHandles: any[];
   physics: boolean;
   motionBlend: number;
-  livingMotion: boolean;
   physicsSettings: PhysicsSettings;
-  skinSettings: SkinSettings;
+  toonSettings: ToonSettings;
+  xrPresenting: boolean;
+  renderScale: number;
 }
