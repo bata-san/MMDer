@@ -58,16 +58,33 @@ jobs:
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
+          fetch_asset() {
+            local url="$1"
+            local output="$2"
+            local headers="${3:-}"
+            for attempt in $(seq 1 15); do
+              if [ -n "$headers" ]; then
+                if curl --fail --silent --show-error -D "$headers" "$url" -o "$output"; then return 0; fi
+              else
+                if curl --fail --silent --show-error "$url" -o "$output"; then return 0; fi
+              fi
+              echo "Asset not ready (attempt $attempt): $url"
+              sleep 2
+            done
+            return 1
+          }
+
+          fetch_asset "$DEPLOY_URL/" /tmp/index.html
           grep -q 'MMD WebGPU/WASM Viewer' /tmp/index.html
 
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 -D /tmp/wasm.headers "$DEPLOY_URL/public/mmd_core.wasm" -o /tmp/mmd_core.wasm
+          fetch_asset "$DEPLOY_URL/public/mmd_core.wasm" /tmp/mmd_core.wasm /tmp/wasm.headers
+          cat /tmp/wasm.headers
           grep -qi '^content-type: application/wasm' /tmp/wasm.headers
           printf '\x00asm' | cmp -n 4 - /tmp/mmd_core.wasm
           node -e "const fs=require('fs'); const b=fs.readFileSync('/tmp/mmd_core.wasm'); if(!WebAssembly.validate(b)) process.exit(1); console.log('WASM validated:', b.length, 'bytes')"
 
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/webgl-renderer.js" -o /tmp/webgl-renderer.js
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/main.js" -o /tmp/main.js
+          fetch_asset "$DEPLOY_URL/src/webgl-renderer.js" /tmp/webgl-renderer.js
+          fetch_asset "$DEPLOY_URL/src/main.js" /tmp/main.js
           grep -q 'WebGl2MmdRenderer' /tmp/webgl-renderer.js
           grep -q 'ensureReady' /tmp/main.js
 
