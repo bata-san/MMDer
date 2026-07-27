@@ -3,6 +3,9 @@
   "name": "mmd-webgpu-wasm-viewer",
   "compatibility_date": "2026-07-27",
   "workers_dev": true,
+  "build": {
+    "command": "bash build-cloudflare.sh"
+  },
   "assets": {
     "directory": "./dist"
   }
