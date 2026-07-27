@@ -1,0 +1,134 @@
+name: Deploy Cloudflare Secure Transfer
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'secure-deploy.trigger'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cloudflare-secure-transfer
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Generate one-time transfer key
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KEY_DIR="$RUNNER_TEMP/cf-transfer"
+          mkdir -p "$KEY_DIR" .cf-transfer
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$KEY_DIR/private.pem"
+          openssl pkey -in "$KEY_DIR/private.pem" -pubout -out .cf-transfer/public.pem
+          chmod 600 "$KEY_DIR/private.pem"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .cf-transfer/public.pem
+          git commit -m 'Publish one-time Cloudflare transfer key'
+          git push origin HEAD:main
+
+      - name: Wait for encrypted credentials and deploy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          KEY_DIR="$RUNNER_TEMP/cf-transfer"
+          SECRET_JSON="$KEY_DIR/credentials.json"
+          CIPHER_BIN="$KEY_DIR/credentials.bin"
+          API_JSON="$KEY_DIR/api-response.json"
+          trap 'rm -rf "$KEY_DIR"' EXIT
+
+          found=0
+          for attempt in $(seq 1 150); do
+            code=$(curl -sS -o "$API_JSON" -w '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/.cf-transfer/payload.b64?ref=main")
+            if [ "$code" = '200' ]; then
+              jq -r '.content' "$API_JSON" | tr -d '\n' | base64 --decode | base64 --decode > "$CIPHER_BIN"
+              found=1
+              break
+            fi
+            sleep 5
+          done
+          test "$found" = '1' || { echo 'Encrypted credential payload was not received'; exit 1; }
+
+          openssl pkeyutl -decrypt \
+            -inkey "$KEY_DIR/private.pem" \
+            -in "$CIPHER_BIN" \
+            -out "$SECRET_JSON" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256
+
+          CLOUDFLARE_ACCOUNT_ID=$(jq -er '.account_id' "$SECRET_JSON")
+          CLOUDFLARE_API_TOKEN=$(jq -er '.api_token' "$SECRET_JSON")
+          echo "::add-mask::$CLOUDFLARE_ACCOUNT_ID"
+          echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+          export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
+
+          cat payload/part-* > mmd-dist.tar.gz.b64
+          base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
+          echo '9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a  mmd-dist.tar.gz' | sha256sum --check --strict
+          tar -xzf mmd-dist.tar.gz
+          cp runtime-patch/main.js dist/public/main.js
+          node --check dist/public/main.js
+          test -f dist/index.html
+          test -f dist/public/mmd_core.wasm
+          test -f wrangler.jsonc
+
+          token_status=$(curl -sS -o token-verify.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            https://api.cloudflare.com/client/v4/user/tokens/verify)
+          test "$token_status" = '200'
+          jq -e '.success == true and .result.status == "active"' token-verify.json >/dev/null
+
+          account_status=$(curl -sS -o account-verify.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID")
+          test "$account_status" = '200'
+          jq -e '.success == true' account-verify.json >/dev/null
+
+          npx --yes wrangler@4.102.0 deploy 2>&1 | tee deploy-production.log
+
+      - name: Upload sanitized deployment log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-secure-production-log
+          path: deploy-production.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove encrypted transfer files
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B main origin/main
+          git rm -f --ignore-unmatch .cf-transfer/public.pem .cf-transfer/payload.b64
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Remove one-time Cloudflare transfer files'
+            git push origin HEAD:main
+          fi
