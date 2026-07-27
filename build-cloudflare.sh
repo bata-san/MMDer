@@ -20,6 +20,35 @@ cp runtime-patch/style.css dist/src/style.css
 test -f "$MMD_WASM"
 cp "$MMD_WASM" dist/src/mmd_anim_wasm_bg.wasm
 
+# MMD toon materials are designed around restrained lighting. The previous
+# additive HemisphereLight 1.7 + DirectionalLight 2.4 clipped model colors to
+# white and crushed shaded regions to black. Keep the runtime source readable,
+# but enforce the calibrated values here so every Cloudflare build is correct.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('runtime-patch/three-main.js')
+source = path.read_text(encoding='utf-8')
+old = """  const hemi = new THREE.HemisphereLight(0xffffff, 0x687184, 1.7);
+  scene.add(hemi);
+
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
+  keyLight.position.set(8, 18, 10);"""
+new = """  // Restrained MMD lighting preserves diffuse and toon-ramp colors.
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+  scene.add(ambientLight);
+
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  keyLight.position.set(3, 4, 5);"""
+
+if old in source:
+    source = source.replace(old, new, 1)
+elif 'new THREE.AmbientLight(0xffffff, 0.15)' not in source:
+    raise SystemExit('Unable to locate the MMD lighting block')
+
+path.write_text(source, encoding='utf-8')
+PY
+
 ./node_modules/.bin/esbuild runtime-patch/three-main.js \
   --bundle \
   --format=esm \
@@ -58,6 +87,10 @@ test -f dist/src/mmd_anim_wasm_bg.wasm
 grep -q 'Three.js renderer' dist/index.html
 grep -q 'VMDカメラ' dist/index.html
 ! grep -q 'MMD deform compute' dist/src/main.js
+! grep -q 'HemisphereLight(0xffffff, 0x687184, 1.7)' dist/src/main.js
+! grep -q 'DirectionalLight(0xffffff, 2.4)' dist/src/main.js
+grep -q 'AmbientLight(0xffffff, 0.15)' dist/src/main.js
+grep -q 'DirectionalLight(0xffffff, 1)' dist/src/main.js
 
 rm -f "$ARCHIVE_B64" "$ARCHIVE"
 echo 'Cloudflare Three.js MMD build prepared in dist/'
