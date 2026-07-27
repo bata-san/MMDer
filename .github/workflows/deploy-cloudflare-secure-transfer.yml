@@ -58,8 +58,10 @@ jobs:
           STATUS_LOG="$GITHUB_WORKSPACE/secure-status.log"
           trap 'rm -rf "$KEY_DIR"' EXIT
           diag() { printf '%s\n' "$1" | tee -a "$STATUS_LOG"; }
+          fail() { diag "failure=$1"; exit 1; }
 
           found=0
+          code=000
           for attempt in $(seq 1 150); do
             code=$(curl -sS -o "$API_JSON" -w '%{http_code}' \
               -H "Authorization: Bearer $GH_TOKEN" \
@@ -74,25 +76,18 @@ jobs:
             sleep 5
           done
           diag "payload_http=$code"
-          test "$found" = '1' || { diag 'failure=encrypted_payload_missing'; exit 1; }
+          test "$found" = '1' || fail encrypted_payload_missing
           diag "cipher_bytes=$(wc -c < "$CIPHER_BIN")"
 
-          if openssl pkeyutl -decrypt \
+          openssl pkeyutl -decrypt \
             -inkey "$KEY_DIR/private.pem" \
             -in "$CIPHER_BIN" \
             -out "$SECRET_JSON" \
             -pkeyopt rsa_padding_mode:oaep \
-            -pkeyopt rsa_oaep_md:sha256; then
-            diag 'phase=credentials_decrypted'
-          else
-            diag 'failure=credential_decryption_failed'
-            exit 1
-          fi
+            -pkeyopt rsa_oaep_md:sha256 || fail credential_decryption_failed
+          diag 'phase=credentials_decrypted'
 
-          if ! jq -e 'type == "object" and (.account_id | type == "string") and (.api_token | type == "string")' "$SECRET_JSON" >/dev/null; then
-            diag 'failure=credential_json_invalid'
-            exit 1
-          fi
+          jq -e 'type == "object" and (.account_id | type == "string") and (.api_token | type == "string")' "$SECRET_JSON" >/dev/null || fail credential_json_invalid
           CLOUDFLARE_ACCOUNT_ID=$(jq -er '.account_id' "$SECRET_JSON")
           CLOUDFLARE_API_TOKEN=$(jq -er '.api_token' "$SECRET_JSON")
           echo "::add-mask::$CLOUDFLARE_ACCOUNT_ID"
@@ -100,15 +95,37 @@ jobs:
           export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
           diag 'phase=credentials_loaded_and_masked'
 
-          cat payload/part-* > mmd-dist.tar.gz.b64
-          base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
-          echo '9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a  mmd-dist.tar.gz' | sha256sum --check --strict
-          tar -xzf mmd-dist.tar.gz
-          cp runtime-patch/main.js dist/public/main.js
-          node --check dist/public/main.js
-          test -f dist/index.html
-          test -f dist/public/mmd_core.wasm
-          test -f wrangler.jsonc
+          diag 'phase=bundle_reconstruction_started'
+          part_count=$(find payload -maxdepth 1 -type f -name 'part-*' | wc -l | tr -d ' ')
+          diag "payload_parts=$part_count"
+          test "$part_count" -gt 0 || fail payload_parts_missing
+          cat payload/part-* > mmd-dist.tar.gz.b64 || fail payload_concat_failed
+          base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz || fail payload_base64_decode_failed
+          diag "archive_bytes=$(wc -c < mmd-dist.tar.gz)"
+          archive_sha=$(sha256sum mmd-dist.tar.gz | awk '{print $1}')
+          diag "archive_sha256=$archive_sha"
+          test "$archive_sha" = '9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a' || fail archive_checksum_mismatch
+          tar -xzf mmd-dist.tar.gz || fail archive_extract_failed
+          test -f dist/index.html || fail dist_index_missing
+          test -f dist/public/mmd_core.wasm || fail wasm_missing
+          test -f wrangler.jsonc || fail wrangler_config_missing
+          test -f runtime-patch/main.js || fail runtime_patch_missing
+
+          if grep -qE '(\./|/)public/main\.js' dist/index.html; then
+            PATCH_DEST='dist/public/main.js'
+          elif grep -qE '(\./|/)src/main\.js' dist/index.html; then
+            PATCH_DEST='dist/src/main.js'
+          elif test -f dist/public/main.js; then
+            PATCH_DEST='dist/public/main.js'
+          elif test -f dist/src/main.js; then
+            PATCH_DEST='dist/src/main.js'
+          else
+            fail main_script_destination_missing
+          fi
+          mkdir -p "$(dirname "$PATCH_DEST")"
+          cp runtime-patch/main.js "$PATCH_DEST" || fail runtime_patch_copy_failed
+          node --check "$PATCH_DEST" || fail runtime_patch_syntax_invalid
+          diag "patch_destination=$PATCH_DEST"
           diag 'phase=bundle_verified'
 
           token_status=$(curl -sS -o token-verify.json -w '%{http_code}' \
@@ -117,8 +134,8 @@ jobs:
             https://api.cloudflare.com/client/v4/user/tokens/verify || true)
           diag "token_verify_http=$token_status"
           jq -c '{success, status: (.result.status // null), errors: [.errors[]? | {code, message}]}' token-verify.json 2>/dev/null | tee -a "$STATUS_LOG" || diag 'token_verify_response=unparseable'
-          test "$token_status" = '200' || { diag 'failure=token_verify_http'; exit 1; }
-          jq -e '.success == true and .result.status == "active"' token-verify.json >/dev/null || { diag 'failure=token_inactive_or_invalid'; exit 1; }
+          test "$token_status" = '200' || fail token_verify_http
+          jq -e '.success == true and .result.status == "active"' token-verify.json >/dev/null || fail token_inactive_or_invalid
           diag 'phase=token_active'
 
           account_status=$(curl -sS -o account-verify.json -w '%{http_code}' \
@@ -127,8 +144,8 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID" || true)
           diag "account_verify_http=$account_status"
           jq -c '{success, account_name: (.result.name // null), errors: [.errors[]? | {code, message}]}' account-verify.json 2>/dev/null | tee -a "$STATUS_LOG" || diag 'account_verify_response=unparseable'
-          test "$account_status" = '200' || { diag 'failure=account_verify_http'; exit 1; }
-          jq -e '.success == true' account-verify.json >/dev/null || { diag 'failure=account_not_accessible'; exit 1; }
+          test "$account_status" = '200' || fail account_verify_http
+          jq -e '.success == true' account-verify.json >/dev/null || fail account_not_accessible
           diag 'phase=account_access_confirmed'
 
           diag 'phase=wrangler_deploy_started'
