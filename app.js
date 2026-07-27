@@ -7,6 +7,8 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const BUILD_VERSION = 'v1.1.0';
+$('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: true, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, physicsSettings: { mass: 1, stiffness: .5, damping: .2 }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const clock = new THREE.Clock(), scene = new THREE.Scene(), canvas = $('#scene');
 scene.background = new THREE.Color(0xe9edf2);
