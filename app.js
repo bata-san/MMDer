@@ -109,7 +109,7 @@ function createMotionController(mesh) {
   const mixer = new THREE.AnimationMixer(mesh);
   const controller = { mesh, mixer, clips: new Map(), actions: new Map(), current: null, currentName: '', breath: 0, head: 0, blink: 0, nextBlink: 2.5, bones: {}, morphs: [] };
   mesh.traverse(node => { if (!node.isBone) return; if (!controller.bones.chest && /上半身|胸|chest|spine/i.test(node.name)) controller.bones.chest = node; if (!controller.bones.head && /頭|head|neck/i.test(node.name)) controller.bones.head = node; });
-  morphMeshes(mesh).forEach(node => Object.entries(node.morphTargetDictionary).forEach(([name, index]) => { if (/まばたき|blink|eye.?close/i.test(name)) controller.morphs.push({ node, index }); }));
+  morphMeshes(mesh).forEach(node => Object.entries(node.morphTargetDictionary).forEach(([name, index]) => { if (/まばたき|blink|eye.?close/i.test(name)) controller.morphs.push({ node, index, base: node.morphTargetInfluences[index] || 0 }); }));
   return controller;
 }
 function playMotion(controller, clip, name = clip.name || 'VMD', blend = state.motionBlend) {
@@ -130,7 +130,7 @@ function updateLivingMotion(controller, dt, time) {
     controller.blink += dt;
     if (controller.blink > controller.nextBlink) { controller.blink = 0; controller.nextBlink = 2.8 + Math.random() * 4.5; }
     const phase = controller.blink < .18 ? Math.sin(Math.PI * controller.blink / .18) : 0;
-    controller.morphs.forEach(({ node, index }) => { node.morphTargetInfluences[index] = Math.max(node.morphTargetInfluences[index], phase); });
+    controller.morphs.forEach(({ node, index, base }) => { node.morphTargetInfluences[index] = Math.max(0, Math.min(1, base + phase)); });
   }
 }
 
