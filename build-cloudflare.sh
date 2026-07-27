@@ -49,6 +49,11 @@ elif 'new THREE.AmbientLight(0xffffff, 0.15)' not in source:
 path.write_text(source, encoding='utf-8')
 PY
 
+grep -q 'new THREE.AmbientLight(0xffffff, 0.15)' runtime-patch/three-main.js
+grep -q 'new THREE.DirectionalLight(0xffffff, 1.0)' runtime-patch/three-main.js
+! grep -q 'new THREE.HemisphereLight(0xffffff, 0x687184, 1.7)' runtime-patch/three-main.js
+! grep -q 'new THREE.DirectionalLight(0xffffff, 2.4)' runtime-patch/three-main.js
+
 ./node_modules/.bin/esbuild runtime-patch/three-main.js \
   --bundle \
   --format=esm \
@@ -87,10 +92,6 @@ test -f dist/src/mmd_anim_wasm_bg.wasm
 grep -q 'Three.js renderer' dist/index.html
 grep -q 'VMDカメラ' dist/index.html
 ! grep -q 'MMD deform compute' dist/src/main.js
-! grep -q 'HemisphereLight(0xffffff, 0x687184, 1.7)' dist/src/main.js
-! grep -q 'DirectionalLight(0xffffff, 2.4)' dist/src/main.js
-grep -q 'AmbientLight(0xffffff, 0.15)' dist/src/main.js
-grep -q 'DirectionalLight(0xffffff, 1)' dist/src/main.js
 
 rm -f "$ARCHIVE_B64" "$ARCHIVE"
 echo 'Cloudflare Three.js MMD build prepared in dist/'
