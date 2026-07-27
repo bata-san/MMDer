@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Reconstruct deployment bundle
+      - name: Reconstruct and patch deployment bundle
         shell: bash
         run: |
           set -euo pipefail
@@ -24,9 +24,18 @@ jobs:
           base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
           echo "9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a  mmd-dist.tar.gz" | sha256sum --check --strict
           tar -xzf mmd-dist.tar.gz
+
+          base64 --decode patch/mmd-fix-patch.tar.gz.b64 > mmd-fix-patch.tar.gz
+          echo "55f7a39ca2d124cb2fcfdab0ed1e00053991bccb44e159e21e2e9617f7c0cf4b  mmd-fix-patch.tar.gz" | sha256sum --check --strict
+          tar -xzf mmd-fix-patch.tar.gz -C dist
+
           test -f dist/index.html
           test -f dist/public/mmd_core.wasm
+          test -f dist/src/webgl-renderer.js
           test -f wrangler.jsonc
+          node --check dist/src/main.js
+          node --check dist/src/wasm-core.js
+          node --check dist/src/webgl-renderer.js
           printf 'WASM magic: '
           od -An -tx1 -N4 dist/public/mmd_core.wasm
 
@@ -39,6 +48,23 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4.102.0 deploy --temporary 2>&1 | tee deploy.log
+          DEPLOY_URL="$(grep -Eo 'https://[^ ]+\.workers\.dev' deploy.log | tail -1)"
+          test -n "$DEPLOY_URL"
+          echo "url=$DEPLOY_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify deployed assets
+        shell: bash
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/" > /tmp/index.html
+          grep -q 'MMD WebGPU/WASM Viewer' /tmp/index.html
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 -D /tmp/wasm.headers "$DEPLOY_URL/public/mmd_core.wasm" -o /tmp/mmd_core.wasm
+          grep -qi '^content-type: application/wasm' /tmp/wasm.headers
+          printf '\\x00asm' | cmp -n 4 - /tmp/mmd_core.wasm
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/webgl-renderer.js" | grep -q 'WebGl2MmdRenderer'
+          node -e "const fs=require('fs'); const b=fs.readFileSync('/tmp/mmd_core.wasm'); if(!WebAssembly.validate(b)) process.exit(1); console.log('WASM validated:', b.length, 'bytes')"
 
       - name: Write deployment output to summary
         if: always()
