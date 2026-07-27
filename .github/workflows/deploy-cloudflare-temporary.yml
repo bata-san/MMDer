@@ -1,0 +1,62 @@
+name: Deploy Cloudflare Temporary
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct deployment bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload/part-* > mmd-dist.tar.gz.b64
+          base64 --decode mmd-dist.tar.gz.b64 > mmd-dist.tar.gz
+          echo "9729a92e188e1b20da7a9d201504317da7e1444f116a637d5fa43ba0d0ec493a  mmd-dist.tar.gz" | sha256sum --check --strict
+          tar -xzf mmd-dist.tar.gz
+          test -f dist/index.html
+          test -f dist/public/mmd_core.wasm
+          test -f wrangler.jsonc
+          printf 'WASM magic: '
+          od -An -tx1 -N4 dist/public/mmd_core.wasm
+
+      - name: Deploy to temporary Cloudflare account
+        id: deploy
+        shell: bash
+        env:
+          CI: "true"
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.102.0 deploy --temporary 2>&1 | tee deploy.log
+
+      - name: Write deployment output to summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Cloudflare temporary deployment'
+            echo
+            echo '```text'
+            test -f deploy.log && cat deploy.log || echo 'deploy.log was not created'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-deploy-log
+          path: deploy.log
+          if-no-files-found: warn
+          retention-days: 1
