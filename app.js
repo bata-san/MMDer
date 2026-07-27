@@ -6,7 +6,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-const BUILD_VERSION = 'v2.6.2';
+const BUILD_VERSION = 'v2.7.0';
 $('#build-version').textContent = BUILD_VERSION;
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, outline: true, environment: null, environmentStrength: .65, assets: [], rigHandles: [], physics: false, physicsSettings: { stiffness: .5, damping: .2, gravity: 1, wind: 0, turbulence: 0, quality: 3, air: .25, parts: { hair: true, cloth: true, body: true } }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
 const renderRatio = () => Math.min(devicePixelRatio, 2);
@@ -17,9 +17,52 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setPixelRatio(renderRatio()); renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1;
 const outlineTarget = new THREE.WebGLRenderTarget(Math.round(innerWidth * renderRatio()), Math.round(innerHeight * renderRatio()), { depthBuffer: true }); outlineTarget.depthTexture = new THREE.DepthTexture(outlineTarget.width, outlineTarget.height); outlineTarget.depthTexture.type = THREE.UnsignedShortType;
 const outlineScene = new THREE.Scene(), outlineCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const outlineMaterial = new THREE.ShaderMaterial({ uniforms: { tColor: { value: outlineTarget.texture }, tDepth: { value: outlineTarget.depthTexture }, resolution: { value: new THREE.Vector2(outlineTarget.width, outlineTarget.height) }, width: { value: 1.15 } }, vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position, 1.0); }', fragmentShader: 'uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 resolution; uniform float width; varying vec2 vUv; void main(){ vec2 px = width / resolution; vec4 c = texture2D(tColor, vUv); float z = texture2D(tDepth, vUv).x; vec2 offsets[4]; offsets[0] = vec2(px.x, 0.0); offsets[1] = vec2(-px.x, 0.0); offsets[2] = vec2(0.0, px.y); offsets[3] = vec2(0.0, -px.y); float depthEdge = 0.0; for(int i=0;i<4;i++){ depthEdge = max(depthEdge, abs(z-texture2D(tDepth, vUv + offsets[i]).x)); } float threshold = max(.0008, fwidth(z) * 3.0); float edge = smoothstep(threshold, threshold * 12.0, depthEdge); vec3 ink = c.rgb * .38; gl_FragColor = vec4(mix(c.rgb, ink, edge), c.a); #include <colorspace_fragment> }', toneMapped: false });
+const outlineVertexShader = `varying vec2 vUv;
+void main() { vUv = uv; gl_Position = vec4( position, 1.0 ); }`;
+const outlineFragmentShader = `
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+uniform vec2 resolution;
+uniform float width;
+varying vec2 vUv;
+
+float luma( vec3 color ) { return dot( color, vec3( .299, .587, .114 ) ); }
+vec3 fxaa( vec2 uv ) {
+  vec2 px = 1.0 / resolution;
+  vec3 nw = texture2D( tColor, uv + px * vec2( -1.0, -1.0 ) ).rgb;
+  vec3 ne = texture2D( tColor, uv + px * vec2(  1.0, -1.0 ) ).rgb;
+  vec3 sw = texture2D( tColor, uv + px * vec2( -1.0,  1.0 ) ).rgb;
+  vec3 se = texture2D( tColor, uv + px * vec2(  1.0,  1.0 ) ).rgb;
+  vec3 center = texture2D( tColor, uv ).rgb;
+  float lNW = luma( nw ), lNE = luma( ne ), lSW = luma( sw ), lSE = luma( se ), lM = luma( center );
+  float lMin = min( lM, min( min( lNW, lNE ), min( lSW, lSE ) ) );
+  float lMax = max( lM, max( max( lNW, lNE ), max( lSW, lSE ) ) );
+  vec2 dir = vec2( -( ( lNW + lNE ) - ( lSW + lSE ) ), ( lNW + lSW ) - ( lNE + lSE ) );
+  float reduce = max( ( lNW + lNE + lSW + lSE ) * .03125, .0078125 );
+  float inverse = 1.0 / ( min( abs( dir.x ), abs( dir.y ) ) + reduce );
+  dir = clamp( dir * inverse, vec2( -6.0 ), vec2( 6.0 ) ) * px;
+  vec3 a = .5 * ( texture2D( tColor, uv + dir * ( 1.0 / 3.0 - .5 ) ).rgb + texture2D( tColor, uv + dir * ( 2.0 / 3.0 - .5 ) ).rgb );
+  vec3 b = a * .5 + .25 * ( texture2D( tColor, uv + dir * -.5 ).rgb + texture2D( tColor, uv + dir * .5 ).rgb );
+  float lB = luma( b );
+  return ( lB < lMin || lB > lMax ) ? a : b;
+}
+void main() {
+  vec2 px = width / resolution;
+  float z = texture2D( tDepth, vUv ).x;
+  float depthEdge = 0.0;
+  depthEdge = max( depthEdge, abs( z - texture2D( tDepth, vUv + vec2( px.x, 0.0 ) ).x ) );
+  depthEdge = max( depthEdge, abs( z - texture2D( tDepth, vUv - vec2( px.x, 0.0 ) ).x ) );
+  depthEdge = max( depthEdge, abs( z - texture2D( tDepth, vUv + vec2( 0.0, px.y ) ).x ) );
+  depthEdge = max( depthEdge, abs( z - texture2D( tDepth, vUv - vec2( 0.0, px.y ) ).x ) );
+  float localDepth = max( fwidth( z ) * 1.5, .00004 );
+  float silhouette = smoothstep( localDepth, localDepth * 7.0, depthEdge );
+  vec3 color = fxaa( vUv );
+  vec3 ink = color * .32;
+  gl_FragColor = vec4( mix( color, ink, silhouette ), 1.0 );
+  #include <colorspace_fragment>
+}`;
+const outlineMaterial = new THREE.ShaderMaterial({ uniforms: { tColor: { value: outlineTarget.texture }, tDepth: { value: outlineTarget.depthTexture }, resolution: { value: new THREE.Vector2(outlineTarget.width, outlineTarget.height) }, width: { value: 1.0 } }, vertexShader: outlineVertexShader, fragmentShader: outlineFragmentShader, toneMapped: false });
 outlineScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outlineMaterial));
-outlineMaterial.fragmentShader = outlineMaterial.fragmentShader.replace('; #include <colorspace_fragment>', ';\n#include <colorspace_fragment>');
 outlineMaterial.extensions.derivatives = true;
 const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularShader();
 const controls = new OrbitControls(camera, canvas); controls.target.set(0, 4, 0); controls.enableDamping = true; controls.dampingFactor = .06; controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI; controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }; controls.screenSpacePanning = true;
@@ -59,7 +102,7 @@ async function importAssets(files, loadImmediately = false) { const saved = []; 
 async function loadAssetModel(asset) { await loadModel(asset.file); }
 async function applyAssetMotion(asset) { await applyMotion(asset.file); }
 
-function createDisplayMaterial(source) { const map = source.map || null; if (map) map.colorSpace = THREE.SRGBColorSpace; if (source.emissiveMap) source.emissiveMap.colorSpace = THREE.SRGBColorSpace; const transparent = source.transparent || (source.opacity ?? 1) < .999; const material = new THREE.MeshToonMaterial({ name: source.name, color: source.color?.clone?.() || new THREE.Color(0xffffff), map, gradientMap: source.gradientMap || null, alphaMap: source.alphaMap || null, emissive: source.emissive?.clone?.() || new THREE.Color(0x000000), emissiveMap: source.emissiveMap || null, emissiveIntensity: source.emissiveIntensity ?? 1, side: THREE.DoubleSide, transparent, opacity: source.opacity ?? 1, alphaTest: Math.max(source.alphaTest || 0, transparent ? .01 : 0), depthWrite: source.depthWrite !== false, depthTest: true }); material.envMap = source.envMap || null; material.combine = source.combine; material.reflectivity = source.reflectivity ?? 1; material.normalMap = source.normalMap || null; material.normalScale?.copy(source.normalScale || new THREE.Vector2(1, 1)); material.needsUpdate = true; return material; }
+function createDisplayMaterial(source) { const map = source.map || null; if (map) map.colorSpace = THREE.SRGBColorSpace; if (source.emissiveMap) source.emissiveMap.colorSpace = THREE.SRGBColorSpace; const transparent = source.transparent || (source.opacity ?? 1) < .999; const material = new THREE.MeshToonMaterial({ name: source.name, color: source.color?.clone?.() || new THREE.Color(0xffffff), map, gradientMap: source.gradientMap || null, alphaMap: source.alphaMap || null, emissive: source.emissive?.clone?.() || new THREE.Color(0x000000), emissiveMap: source.emissiveMap || null, emissiveIntensity: source.emissiveIntensity ?? 1, side: THREE.DoubleSide, transparent, opacity: source.opacity ?? 1, alphaTest: Math.max(source.alphaTest || 0, transparent ? .01 : 0), depthWrite: source.depthWrite !== false, depthTest: true, dithering: true }); material.envMap = source.envMap || null; material.combine = source.combine; material.reflectivity = source.reflectivity ?? 1; material.normalMap = source.normalMap || null; material.normalScale?.copy(source.normalScale || new THREE.Vector2(1, 1)); installMmdShader(material); material.needsUpdate = true; return material; }
 function loadModel(file) { return new Promise(resolve => { setNotice('LOADING MODEL…'); loader.load(url(file), mesh => { mesh.name = file.name; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = false; mesh.traverse(node => { if (!node.isMesh) return; node.frustumCulled = false; node.castShadow = true; node.receiveShadow = false; const original = Array.isArray(node.material) ? node.material : [node.material]; const display = original.map(source => source ? createDisplayMaterial(source) : source); node.material = Array.isArray(node.material) ? display : display[0]; }); const item = { mesh, file, name: file.name, phase: Math.random() * Math.PI * 2, base: mesh.position.clone(), physics: null }; mesh.position.x = state.models.length * 2.7; scene.add(mesh); state.models.push(item); setupRigHandles(item); setActive(item); frameModel(mesh); renderSceneModels(); setNotice(); toast(`${file.name} を読み込みました`); resolve(item); }, undefined, error => { console.error(error); setNotice(); toast(`${file.name} を読めませんでした。コンソールを確認してください`); resolve(null); }); }); }
 function applyMotion(file) { const item = state.active; if (!item) { toast('先にモデルを選択してください'); return Promise.resolve(); } if (ext(file) === 'vpd') return new Promise(resolve => loader.loadVPD(url(file), false, pose => { loader.poseAsVpd(item.mesh, pose); toast(`VPD: ${file.name}`); resolve(); }, undefined, () => { toast('VPD の読み込みに失敗しました'); resolve(); }));
   return new Promise(resolve => loader.loadAnimation(url(file), item.mesh, clip => { const mixer = new THREE.AnimationMixer(item.mesh); const action = mixer.clipAction(clip).play(); action.setLoop(THREE.LoopRepeat, Infinity); state.mixers.push({ mixer, action, clip, mesh: item.mesh }); state.duration = Math.max(state.duration, clip.duration); toast(`VMD: ${file.name}`); resolve(); }, undefined, () => { toast('VMD の読み込みに失敗しました'); resolve(); })); }
@@ -72,7 +115,7 @@ function physicsPrecision() { return [{ unitStep: 1 / 60, maxStepNum: 3 }, { uni
 function applyPhysicsSettings(item = state.active) { if (!item?.physics?.bodies || !globalThis.Ammo) return; const { stiffness, damping, gravity, air, parts } = state.physicsSettings, precision = physicsPrecision(); item.physics.unitStep = precision.unitStep; item.physics.maxStepNum = precision.maxStepNum; item.physics.setGravity(new THREE.Vector3(0, -98 * gravity, 0)); item.physics.bodies.forEach(wrapper => { const body = wrapper.body; if (!body) return; const enabled = parts[physicsPart(wrapper, item)]; const linear = enabled ? Math.min(.98, damping + air * .35) : .98; const angular = enabled ? Math.min(.98, damping * .75 + air * .45) : .98; body.setDamping(linear, angular); body.setFriction(.35 + stiffness * .45); body.setRestitution(0); body.setActivationState(4); }); }
 function enablePhysics(item = state.active) { if (!item) return; ammoReady.then(Ammo => { const mmd = item.mesh.geometry?.userData?.MMD; if (!Ammo || !mmd?.rigidBodies?.length) { toast('このモデルには利用可能な物理剛体がありません'); return; } try { item.physics ||= new MMDPhysics(item.mesh, mmd.rigidBodies, mmd.constraints || [], physicsPrecision()); item.physics.reset(); applyPhysicsSettings(item); } catch (error) { console.warn(error); toast('物理を有効化できませんでした'); } }); }
 function applyWind(item, time) { if (!item?.physics?.bodies || !globalThis.Ammo) return; const { wind, turbulence, parts } = state.physicsSettings; if (!wind && !turbulence) return; item.physics.bodies.forEach((wrapper, index) => { const part = physicsPart(wrapper, item); if ((part !== 'hair' && part !== 'cloth') || !parts[part]) return; const body = wrapper.body; if (!body) return; const gust = wind + Math.sin(time * 2.1 + index * 1.7) * turbulence * wind; const force = new Ammo.btVector3(gust, Math.sin(time * 3.7 + index) * turbulence * wind * .2, Math.cos(time * 1.3 + index) * turbulence * wind * .35); body.applyCentralForce(force); Ammo.destroy(force); }); }
-function installMmdShader(material) { material.userData.mmdLabShader ||= { uSpecular: { value: 0.2 }, uWetness: { value: 0 }, uTextureStrength: { value: 1 } }; }
+function installMmdShader(material) { if (material.userData.mmdLabShader) return; const uniforms = { uSpecular: { value: .2 }, uWetness: { value: 0 }, uTextureStrength: { value: 1 }, uRimStrength: { value: .16 } }; material.userData.mmdLabShader = uniforms; material.onBeforeCompile = shader => { Object.assign(shader.uniforms, uniforms); shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `float mmdViewRim = pow( 1.0 - clamp( dot( normalize( normal ), normalize( vViewPosition ) ), 0.0, 1.0 ), 2.6 );\nfloat mmdSpecular = pow( mmdViewRim, 2.2 ) * ( uSpecular * .16 + uWetness * .24 );\nvec3 mmdRimColor = mix( diffuseColor.rgb, vec3( 1.0 ), .18 );\noutgoingLight += mmdRimColor * mmdViewRim * uRimStrength + vec3( mmdSpecular );\n#include <opaque_fragment>`); }; material.customProgramCacheKey = () => 'mmd-lab-toon-v2'; }
 function applySkinShader() { const settings = state.skinSettings; state.models.forEach(item => item.mesh.traverse(node => { if (!node.isMesh || !node.material) return; (Array.isArray(node.material) ? node.material : [node.material]).forEach(material => { installMmdShader(material); const u = material.userData.mmdLabShader; u.uSpecular.value = settings.specular; u.uWetness.value = settings.wetness; u.uTextureStrength.value = settings.roughnessMap; }); })); }
 function renderSceneModels() { const root = $('#models'); if (!state.models.length) { root.innerHTML = '<div class="empty">モデルを読み込むと<br/>ここに表示されます</div>'; $('#model-count').textContent = '0 models'; return; } root.innerHTML = ''; state.models.forEach((m, i) => { const row = document.createElement('button'); row.className = `asset ${m === state.active ? 'active' : ''}`; row.innerHTML = `<span>${String(i + 1).padStart(2, '0')}</span><div><b>${m.name}</b><small>Scene model</small></div>`; row.onclick = () => setActive(m); root.append(row); }); $('#model-count').textContent = `${state.models.length} models`; }
 function morphMeshes(root) { const result = []; root?.traverse(node => { if (node.isMesh && node.morphTargetDictionary && node.morphTargetInfluences) result.push(node); }); return result; }
