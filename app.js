@@ -5,7 +5,6 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
-import AmmoFactory from 'three/addons/libs/ammo.wasm.js';
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const state = { models: [], active: null, mixers: [], duration: 0, elapsed: 0, playing: true, loop: true, flow: true, flowStrength: .35, outline: false, environment: null, environmentStrength: 1, assets: [], rigHandles: [], physics: true, physicsSettings: { mass: 1, stiffness: .5, damping: .2 }, skinSettings: { specular: .2, wetness: 0, roughnessMap: 1 } };
@@ -19,7 +18,7 @@ const pmrem = new THREE.PMREMGenerator(renderer); pmrem.compileEquirectangularSh
 const controls = new OrbitControls(camera, canvas); controls.target.set(0, 4, 0); controls.enableDamping = true; controls.dampingFactor = .06; controls.maxPolarAngle = Math.PI * .48;
 const transform = new TransformControls(camera, renderer.domElement); transform.setMode('translate'); transform.visible = false; transform.addEventListener('dragging-changed', e => controls.enabled = !e.value); scene.add(transform);
 const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
-const ammoReady = AmmoFactory().then(Ammo => { globalThis.Ammo = Ammo; return Ammo; }).catch(() => null);
+const ammoReady = new Promise(resolve => { const script = document.createElement('script'); script.src = 'https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/libs/ammo.wasm.js'; script.onload = async () => { try { const Ammo = await globalThis.Ammo(); globalThis.Ammo = Ammo; resolve(Ammo); } catch { resolve(null); } }; script.onerror = () => resolve(null); document.head.append(script); });
 scene.add(new THREE.HemisphereLight(0xffffff, 0x9da7b3, 2.2));
 const key = new THREE.DirectionalLight(0xfffcf7, 3.1); key.position.set(5, 11, 7); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = key.shadow.camera.bottom = -15; key.shadow.camera.right = key.shadow.camera.top = 15; scene.add(key);
 const fill = new THREE.DirectionalLight(0xcfe3ff, 1.6); fill.position.set(-7, 5, 2); scene.add(fill);
