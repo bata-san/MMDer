@@ -39,7 +39,7 @@
       </div>
       <div class="tab-content" id="morph-tab"><section><div class="section-title"><span>EXPRESSION</span><button id="reset-morph" class="text-button">RESET</button></div><div id="morphs" class="morph-list"><div class="empty">モデルを選択すると<br/>モーフが表示されます</div></div></section></div>
       <div class="tab-content" id="scene-tab">
-        <section><div class="section-title"><span>RENDERING</span></div><label class="check"><input id="toon-outline" type="checkbox"> Toon outline</label><label>TOON OUTLINE <output id="outline-value">0.45</output></label><input id="outline" type="range" min="0" max="1.5" step=".05" value=".45" /><label>EXPOSURE <output id="exposure-value">1.0</output></label><input id="exposure" type="range" min=".4" max="2" step=".1" value="1" /></section>
+        <section><div class="section-title"><span>RENDERING</span></div><label class="check"><input id="toon-outline" type="checkbox" checked> Toon outline</label><label>TOON OUTLINE <output id="outline-value">0.28</output></label><input id="outline" type="range" min="0" max="1.5" step=".05" value=".28" /><label>EXPOSURE <output id="exposure-value">1.0</output></label><input id="exposure" type="range" min=".4" max="2" step=".1" value="1" /></section>
         <section><div class="section-title"><span>HDRI ENVIRONMENT</span><button id="open-hdri" class="text-button">LOAD HDR</button></div><input id="hdri" type="file" accept=".hdr" hidden /><p id="hdri-name" class="muted">Poly Haven — White Studio 05 (CC0)</p><label>ENVIRONMENT INTENSITY <output id="env-value">1.0</output></label><input id="env-intensity" type="range" min="0" max="2" step=".05" value="1" /><label class="check"><input id="show-hdri" type="checkbox" checked> HDRI を背景に表示</label></section>
         <section><div class="section-title"><span>CAMERA PRESET</span></div><div class="preset-grid"><button data-camera="front">FRONT</button><button data-camera="threequarter">3/4</button><button data-camera="wide">WIDE</button></div></section>
         <section><div class="section-title"><span>RIG EDIT</span></div><label class="check"><input id="rig-edit" type="checkbox"> 胸・腰ボーンを移動</label><p class="muted">ボーンのハンドルをクリックし、矢印で移動します。</p></section>
@@ -51,6 +51,6 @@
   </main>
   <div id="toast"></div>
   <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}</script>
-  <script type="module" src="./app.js?v=texture-bundle-1"></script>
+  <script type="module" src="./app.js?v=toon-shading-1"></script>
 </body>
 </html>
