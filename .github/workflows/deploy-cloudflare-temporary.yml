@@ -58,13 +58,50 @@ jobs:
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/" > /tmp/index.html
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/" -o /tmp/index.html
           grep -q 'MMD WebGPU/WASM Viewer' /tmp/index.html
+
           curl --fail --silent --show-error --retry 5 --retry-delay 2 -D /tmp/wasm.headers "$DEPLOY_URL/public/mmd_core.wasm" -o /tmp/mmd_core.wasm
           grep -qi '^content-type: application/wasm' /tmp/wasm.headers
-          printf '\\x00asm' | cmp -n 4 - /tmp/mmd_core.wasm
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/webgl-renderer.js" | grep -q 'WebGl2MmdRenderer'
+          printf '\x00asm' | cmp -n 4 - /tmp/mmd_core.wasm
           node -e "const fs=require('fs'); const b=fs.readFileSync('/tmp/mmd_core.wasm'); if(!WebAssembly.validate(b)) process.exit(1); console.log('WASM validated:', b.length, 'bytes')"
+
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/webgl-renderer.js" -o /tmp/webgl-renderer.js
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$DEPLOY_URL/src/main.js" -o /tmp/main.js
+          grep -q 'WebGl2MmdRenderer' /tmp/webgl-renderer.js
+          grep -q 'ensureReady' /tmp/main.js
+
+      - name: Browser initialization smoke test
+        shell: bash
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
+          if [ -z "$CHROME" ]; then
+            echo 'Chrome is not installed on this runner; skipping browser smoke test.'
+            exit 0
+          fi
+          timeout 45s "$CHROME" \
+            --headless=new \
+            --no-sandbox \
+            --disable-gpu-sandbox \
+            --enable-webgl \
+            --ignore-gpu-blocklist \
+            --use-angle=swiftshader \
+            --enable-unsafe-webgpu \
+            --virtual-time-budget=10000 \
+            --dump-dom "$DEPLOY_URL/" > /tmp/dom.html 2> /tmp/chrome.log || {
+              cat /tmp/chrome.log
+              exit 1
+            }
+          grep -q '準備完了。' /tmp/dom.html || {
+            echo 'Browser did not reach ready state.'
+            grep -o '<p id="status"[^>]*>[^<]*' /tmp/dom.html || true
+            cat /tmp/chrome.log
+            exit 1
+          }
+          grep -o '<p id="status"[^>]*>[^<]*' /tmp/dom.html || true
 
       - name: Write deployment output to summary
         if: always()
