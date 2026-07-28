@@ -466,6 +466,46 @@ function posture(life: LifeController, motion: MotionController): void {
   ].forEach((b) => applyBone(b, IDENTITY, motion));
 }
 
+function supportPose(
+  life: LifeController,
+  motion: MotionController,
+  swingSide: "left" | "right",
+  weight: number,
+  lateralAxis: any,
+): void {
+  // A PMX bone's local axes are exporter-specific; assuming local Z is a
+  // frontal roll made some rigs bend backwards.  Derive the frontal rotation
+  // axis from the actual feet in world space, then convert it into each
+  // bone's parent space before applying the additive pose.
+  const supportSign = swingSide === "left" ? 1 : -1;
+  const up = new THREE.Vector3(0, 1, 0);
+  const forward = lateralAxis.clone().cross(up).normalize();
+  if (forward.lengthSq() < 1e-6) return;
+  const worldRoll = (
+    binding: BoneOffsetBinding | undefined,
+    radians: number,
+  ) => {
+    if (!binding) return;
+    binding.bone.parent?.updateWorldMatrix(true, false);
+    const parentWorld = binding.bone.parent?.getWorldQuaternion(
+      new THREE.Quaternion(),
+    ) ?? new THREE.Quaternion();
+    const localAxis = forward.clone().applyQuaternion(parentWorld.invert());
+    const rotation = new THREE.Quaternion().setFromAxisAngle(
+      localAxis.normalize(),
+      radians * supportSign * weight,
+    );
+    applyBone(binding, rotation, motion);
+  };
+  // The pelvis carries the mass. Spine and shoulders make the counter-tilt
+  // visible while the neck/head remain owned exclusively by gaze.
+  worldRoll(life.body.hips, 0.028);
+  worldRoll(life.body.spineLower, -0.016);
+  worldRoll(life.body.spineUpper, -0.010);
+  worldRoll(life.body.shoulderLeft, -0.006);
+  worldRoll(life.body.shoulderRight, -0.006);
+}
+
 function stance(life: LifeController, motion: MotionController): void {
   const left = life.leftFootIk;
   const right = life.rightFootIk;
@@ -486,7 +526,14 @@ function stance(life: LifeController, motion: MotionController): void {
   const mid = lc.clone().add(rc).multiplyScalar(0.5);
   const width = Math.max(0.12, Math.abs(lc.x - rc.x));
   const pelvis = life.body.hips?.bone ?? life.body.center?.bone;
-  const com = pelvis?.getWorldPosition(new THREE.Vector3()) ?? mid.clone();
+  // PMX exporters can put the pelvis and foot IK controllers under different
+  // internal roots. Comparing their raw world X values made a still model
+  // look metres outside its support polygon and caused sideways skating.
+  // Use support space: the rest pelvis is aligned to the foot midpoint, and
+  // only its displacement from the captured rest pose moves the COM proxy.
+  const pelvisWorld = pelvis?.getWorldPosition(new THREE.Vector3());
+  const com = mid.clone();
+  if (pelvisWorld) com.add(pelvisWorld.sub(life.anchorPosition));
   com.x += life.balanceTestOffsetX;
   const lateral = com.x - mid.x;
   if (
@@ -502,11 +549,11 @@ function stance(life: LifeController, motion: MotionController): void {
   if (!life.footStepSide) {
     setTarget(left, lc, motion);
     setTarget(right, rc, motion);
-    applyPosition(
-      life.centerPosition,
-      new THREE.Vector3(life.balanceCenterOffsetX, 0, 0),
-      motion,
-    );
+    // A PMX centre bone can be the mesh/root translation channel. Moving it
+    // for balance makes the entire character skate sideways, so life never
+    // translates it. Balance must be expressed through the supporting leg and
+    // model-local pose controls after their axes are verified.
+    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
   } else {
     const p = THREE.MathUtils.clamp(
       (life.lifeTime - life.footStepStartedAt) / 1.08,
@@ -529,11 +576,22 @@ function stance(life: LifeController, motion: MotionController): void {
     const end = swing.plantedTarget
       .clone()
       .setY(swing.floorHeight + swing.contactOffset);
-    // The support correction chooses the foot; it must not pull the swing
-    // controller through the other leg. Keep this corrective first step
-    // vertical and let a later planted step establish lateral spacing.
+    // Replant outside the existing support interval and ahead of it. A zero
+    // horizontal delta is only a knee bend; it reads as the foot being
+    // dragged rather than a step. The world-space forward vector comes from
+    // the current left-to-right foot line, so the controller never moves the
+    // PMX root and mirrored rigs cannot cross their legs.
+    const currentMid = start.clone().add(planted.plantedTarget).multiplyScalar(0.5);
+    const outward = Math.sign(start.x - currentMid.x) || (life.footStepSide === "left" ? -1 : 1);
+    const footLine = rc.clone().sub(lc);
+    const forward = footLine.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
+    end.x += outward * 0.08 * life.footStepScale;
+    if (forward.lengthSq() > 1e-6) end.addScaledVector(forward, 0.22 * life.footStepScale);
     const target = start.lerp(end, stepE);
-    target.y += Math.sin(Math.PI * stepE) * 0.14;
+    // The previous 0.14 lift was measurable but visually imperceptible on
+    // adult-scale PMX models. This is a conservative toe-clearance arc, not
+    // a jump; IK bends the thigh and knee while the support foot stays fixed.
+    target.y += Math.sin(Math.PI * stepE) * 0.24 * life.footStepScale;
     const plantedGoal = planted.plantedTarget
       .clone()
       .setY(planted.floorHeight + planted.contactOffset);
@@ -546,29 +604,16 @@ function stance(life: LifeController, motion: MotionController): void {
     }
     setTarget(swing, target, motion);
     setTarget(planted, plantedGoal, motion);
-    const supportOffset = life.footStepSide === "left" ? 0.045 : -0.045;
-    applyPosition(
-      life.centerPosition,
-      new THREE.Vector3(
-        life.balanceCenterOffsetX + supportOffset * weightOnSupport,
-        0,
-        0,
-      ),
+    supportPose(
+      life,
       motion,
+      life.footStepSide,
+      weightOnSupport,
+      rc.clone().sub(lc),
     );
+    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
     if (p >= 1) {
-      // Calibrate the persistent centre using the actual pelvis world point,
-      // not the centre bone's zero pose.  This keeps the COM inside the new
-      // support interval on models whose rest rig is asymmetric.
-      const midpoint = leftGoal.clone().add(rightGoal).multiplyScalar(0.5);
-      const currentPelvis = (life.body.hips?.bone ?? life.body.center?.bone)?.getWorldPosition(new THREE.Vector3());
-      if (currentPelvis) {
-        life.balanceCenterOffsetX += THREE.MathUtils.clamp(
-          midpoint.x - currentPelvis.x,
-          -0.12,
-          0.12,
-        );
-      }
+      life.balanceCenterOffsetX = 0;
       swing.plantedTarget.copy(end).setY(swing.restTarget.y);
       life.footStepSide = null;
       life.forceFootStep = false;
