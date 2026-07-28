@@ -63,6 +63,12 @@ export interface PositionOffsetBinding {
   lastOffset: any;
 }
 
+export interface FootIkRuntime {
+  binding: PositionOffsetBinding;
+  solver: any;
+  floorHeight: number;
+}
+
 export interface LegIkChain {
   hip: any;
   knee: any;
@@ -115,6 +121,8 @@ export interface LifeController {
   centerPosition?: PositionOffsetBinding;
   leftFoot?: PositionOffsetBinding;
   rightFoot?: PositionOffsetBinding;
+  leftFootIk?: FootIkRuntime;
+  rightFootIk?: FootIkRuntime;
   nextFootStepAt: number;
   footStepStartedAt: number;
   footStepSide: 'left' | 'right' | null;

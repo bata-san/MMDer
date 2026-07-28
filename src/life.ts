@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
 import { blinkEnvelope, minimumJerk } from './life-math.js';
 import { motionControlsBone, motionControlsMorph } from './motion.js';
 import { state } from './state.js';
@@ -6,6 +7,7 @@ import type {
   BlinkKind,
   BodyRegion,
   BoneOffsetBinding,
+  FootIkRuntime,
   LegIkChain,
   LifeController,
   MotionController,
@@ -139,6 +141,14 @@ function createLegIkChain(mesh: any, side: 'left' | 'right'): LegIkChain | undef
   };
 }
 
+function createFootIkRuntime(mesh: any, binding: PositionOffsetBinding | undefined): FootIkRuntime | undefined {
+  if (!binding || !mesh.skeleton?.bones) return undefined;
+  const target = mesh.skeleton.bones.indexOf(binding.bone);
+  const ik = mesh.geometry?.userData?.MMD?.iks?.find((candidate: any) => candidate.target === target);
+  if (!ik) return undefined;
+  return { binding, solver: new CCDIKSolver(mesh, [ik]), floorHeight: binding.bone.getWorldPosition(new THREE.Vector3()).y };
+}
+
 function collectEyeBindings(mesh: any): BoneOffsetBinding[] {
   const both = findBone(mesh, [/^(両目|eyes|both.?eyes)$/i, /両目|both.?eye/i]);
   if (both) return [boneBinding(both)!];
@@ -177,11 +187,13 @@ function createBreathAction(mesh: any, motion: MotionController): { clip: any | 
   const rightShoulder = findBone(mesh, [/^右肩$/i, /^(right.?shoulder|shoulder[_ .-]?r)$/i]);
   const neck = findBone(mesh, [/^首$/i, /^neck$/i]);
   const tracks: any[] = [];
-  if (lower) tracks.push(quaternionTrack(lower.name, [[0, 0, 0], [0.018, 0, 0], [0, 0, 0], [-0.007, 0, 0], [0, 0, 0]]));
-  if (upper) tracks.push(quaternionTrack(upper.name, [[0, 0, 0], [0.03, 0, 0.002], [0, 0, 0], [-0.011, 0, -0.002], [0, 0, 0]]));
-  if (leftShoulder) tracks.push(quaternionTrack(leftShoulder.name, [[0, 0, 0], [0, 0, -0.009], [0, 0, 0], [0, 0, 0.003], [0, 0, 0]]));
-  if (rightShoulder) tracks.push(quaternionTrack(rightShoulder.name, [[0, 0, 0], [0, 0, 0.009], [0, 0, 0], [0, 0, -0.003], [0, 0, 0]]));
-  if (neck) tracks.push(quaternionTrack(neck.name, [[0, 0, 0], [-0.005, 0, 0], [0, 0, 0], [0.002, 0, 0], [0, 0, 0]]));
+  // Breathing is deliberately confined below the neck.  A neck track is
+  // visually amplified by many PMX parent chains and can produce impossible
+  // head rotations on models with a 首IK or auxiliary head bone.
+  if (lower) tracks.push(quaternionTrack(lower.name, [[0, 0, 0], [0.006, 0, 0], [0, 0, 0], [-0.002, 0, 0], [0, 0, 0]]));
+  if (upper) tracks.push(quaternionTrack(upper.name, [[0, 0, 0], [0.011, 0, 0.001], [0, 0, 0], [-0.003, 0, -0.001], [0, 0, 0]]));
+  if (leftShoulder) tracks.push(quaternionTrack(leftShoulder.name, [[0, 0, 0], [0, 0, -0.0025], [0, 0, 0], [0, 0, 0.001], [0, 0, 0]]));
+  if (rightShoulder) tracks.push(quaternionTrack(rightShoulder.name, [[0, 0, 0], [0, 0, 0.0025], [0, 0, 0], [0, 0, -0.001], [0, 0, 0]]));
   if (!tracks.length) return { clip: null, action: null };
   const clip = new THREE.AnimationClip('Life breathing additive', 1, tracks);
   THREE.AnimationUtils.makeClipAdditive(clip, 0, clip, 30);
@@ -197,6 +209,8 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
   const facial = collectFacialMorphs(mesh);
   const swayNoise: LifeController['swayNoise'] = {};
   const body = collectBodyBindings(mesh);
+  const leftFoot = positionBinding(findBone(mesh, [/^左足ＩＫ$/i, /^(left.?foot.?ik|foot[_ .-]?ik[_ .-]?l)$/i])) ?? undefined;
+  const rightFoot = positionBinding(findBone(mesh, [/^右足ＩＫ$/i, /^(right.?foot.?ik|foot[_ .-]?ik[_ .-]?r)$/i])) ?? undefined;
   const anchor = body.hips?.bone ?? body.center?.bone ?? body.spineLower?.bone ?? mesh;
   const anchorPosition = anchor.getWorldPosition(new THREE.Vector3());
   BODY_REGIONS.forEach((region) => { swayNoise[region] = 0; });
@@ -240,10 +254,10 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     posturePitch: 0,
     postureRoll: 0,
     centerPosition: positionBinding(body.center?.bone ?? body.hips?.bone) ?? undefined,
-    leftFoot: positionBinding(findBone(mesh, [/^左足ＩＫ$/i, /^(left.?foot.?ik|foot[_ .-]?ik[_ .-]?l)$/i])) ?? undefined,
-    rightFoot: positionBinding(findBone(mesh, [/^右足ＩＫ$/i, /^(right.?foot.?ik|foot[_ .-]?ik[_ .-]?r)$/i])) ?? undefined,
-    leftLegIk: createLegIkChain(mesh, 'left'),
-    rightLegIk: createLegIkChain(mesh, 'right'),
+    leftFoot,
+    rightFoot,
+    leftFootIk: createFootIkRuntime(mesh, leftFoot),
+    rightFootIk: createFootIkRuntime(mesh, rightFoot),
     nextFootStepAt: 3 + Math.random() * 4,
     footStepStartedAt: -Infinity,
     footStepSide: null,
@@ -582,7 +596,10 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   const rightStepping = life.footStepSide === 'right';
   // Prefer the real thigh/knee/ankle chain. The old MMD controller remains a
   // fallback for non-humanoid rigs where a complete chain cannot be found.
-  if (leftStepping && life.leftLegIk) {
+  if (leftStepping && life.leftFootIk) {
+    applyPositionOffset(life.leftFootIk.binding, footOffset, motion);
+    life.leftFootIk.solver.update();
+  } else if (leftStepping && life.leftLegIk) {
     const target = life.leftLegIk.ankle.getWorldPosition(new THREE.Vector3());
     target.x += footOffset.x;
     target.z += footOffset.z;
@@ -592,7 +609,10 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   } else {
     applyPositionOffset(life.leftFoot, leftStepping ? footOffset : zero, motion);
   }
-  if (rightStepping && life.rightLegIk) {
+  if (rightStepping && life.rightFootIk) {
+    applyPositionOffset(life.rightFootIk.binding, footOffset, motion);
+    life.rightFootIk.solver.update();
+  } else if (rightStepping && life.rightLegIk) {
     const target = life.rightLegIk.ankle.getWorldPosition(new THREE.Vector3());
     target.x += footOffset.x;
     target.z += footOffset.z;
@@ -643,37 +663,21 @@ export function updateLife(
   // advancing in that case, but gaze, micro-saccades and stance still need to
   // make a held pose feel alive.
   updateGaze(life, motion, delta);
-  updatePostureInertia(life, delta);
-
   const eyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    life.gazePitch + life.microPitch,
-    life.gazeYaw + life.microYaw,
+    THREE.MathUtils.clamp(life.gazePitch + life.microPitch, -0.07, 0.07),
+    THREE.MathUtils.clamp(life.gazeYaw + life.microYaw, -0.1, 0.1),
     0,
   ));
   life.eyes.forEach((binding) => applyBoneOffset(binding, eyeOffset, motion));
-
-  BODY_REGIONS.forEach((region) => {
-    let offset = regionOffset(life, region, delta);
-    if (region === 'head' || region === 'neck' || region === 'spineUpper') {
-      const followScale = region === 'head' ? 1 : region === 'neck' ? 0.42 : 0.12;
-      const follow = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-        life.gazePitch * settings.headFollow * followScale * 0.55,
-        life.gazeYaw * settings.headFollow * followScale,
-        0,
-      ));
-      offset = offset.clone().multiply(follow);
-    }
-    if (region === 'hips' || region === 'spineLower' || region === 'spineUpper' || region === 'shoulderLeft' || region === 'shoulderRight') {
-      const scale = region === 'hips' ? 0.5 : region === 'spineLower' ? 0.78 : region === 'spineUpper' ? 1 : 0.22;
-      const inertia = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-        life.posturePitch * scale,
-        0,
-        life.postureRoll * scale,
-      ));
-      offset = offset.clone().multiply(inertia);
-    }
-    applyBoneOffset(life.body[region], offset, motion);
-  });
+  // Rebuilt life layer: do not write to head, neck, hips or feet until the
+  // model-specific IK validation has passed.  The previous broad procedural
+  // offsets fought PMX parent chains and were the source of the twisted neck.
+  BODY_REGIONS.forEach((region) => applyBoneOffset(life.body[region], IDENTITY, motion));
+  applyPositionOffset(life.centerPosition, new THREE.Vector3(), motion);
+  applyPositionOffset(life.leftFoot, new THREE.Vector3(), motion);
+  applyPositionOffset(life.rightFoot, new THREE.Vector3(), motion);
+  clearLegIk(life.leftLegIk, motion);
+  clearLegIk(life.rightLegIk, motion);
   updateFootPlacement(life, motion);
 }
 
