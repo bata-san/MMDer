@@ -11,6 +11,7 @@ import { state } from './state.js';
 type XrAction = 'previous' | 'next' | 'down' | 'up' | 'reset';
 
 const xrRaycaster = new THREE.Raycaster();
+const handCollisionRaycaster = new THREE.Raycaster();
 const xrHands: Array<{ controller: any; collider: any; previous: any; velocity: any }> = [];
 const trackedHandJoints = ['wrist', 'palm', 'thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
 const trackedHandBones = [
@@ -20,7 +21,7 @@ const trackedHandBones = [
   ['wrist', 'ring-finger-metacarpal'], ['ring-finger-metacarpal', 'ring-finger-phalanx-proximal'], ['ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate'], ['ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal'], ['ring-finger-phalanx-distal', 'ring-finger-tip'],
   ['wrist', 'pinky-finger-metacarpal'], ['pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal'], ['pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate'], ['pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal'], ['pinky-finger-phalanx-distal', 'pinky-finger-tip'],
 ];
-const trackedHands: Array<{ hand: any; previous: Map<string, any>; visuals: Map<string, any>; bones: Map<string, any> }> = [];
+const trackedHands: Array<{ hand: any; previous: Map<string, any>; collisions: Map<string, any>; display: Map<string, any>; visuals: Map<string, any>; bones: Map<string, any> }> = [];
 const xrUi = new THREE.Group();
 xrUi.name = 'XR_MORPH_PANEL';
 xrUi.visible = false;
@@ -310,7 +311,7 @@ function createTrackedHand(index: number): void {
   hand.name = `XR_TRACKED_HAND_${index}`;
   hand.userData.xrHandTracking = true;
   scene.add(hand);
-  trackedHands.push({ hand, previous: new Map(), visuals: new Map(), bones: new Map() });
+  trackedHands.push({ hand, previous: new Map(), collisions: new Map(), display: new Map(), visuals: new Map(), bones: new Map() });
 }
 
 function trackedJointVisual(entry: { hand: any; visuals: Map<string, any> }, name: string, radius: number): any {
@@ -339,6 +340,23 @@ function trackedBoneVisual(entry: { hand: any; bones: Map<string, any> }, key: s
   return mesh;
 }
 
+function resolveHandCollision(previous: any, target: any, radius: number): { point: any; hit: boolean } {
+  const travel = target.clone().sub(previous);
+  const length = travel.length();
+  if (length < 0.0005) return { point: target, hit: false };
+  handCollisionRaycaster.set(previous, travel.normalize());
+  handCollisionRaycaster.far = length + radius;
+  const targets = state.models.filter((model) => model.visible).map((model) => model.mesh);
+  const hit = handCollisionRaycaster.intersectObjects(targets, true)[0];
+  if (!hit || hit.distance > length + radius) return { point: target, hit: false };
+  const normal = hit.face?.normal?.clone?.() ?? travel.clone().multiplyScalar(-1);
+  normal.transformDirection(hit.object.matrixWorld).normalize();
+  // Keep the rendered hand just outside the surface. This is a kinematic
+  // proxy: the real tracked hand is never constrained, but the virtual hand
+  // visibly contacts the model instead of passing through it.
+  return { point: hit.point.clone().addScaledVector(normal, radius), hit: true };
+}
+
 function updateTrackedHandContacts(delta: number): boolean {
   let tracking = false;
   trackedHands.forEach((entry) => {
@@ -352,27 +370,35 @@ function updateTrackedHandContacts(delta: number): boolean {
       const tip = name.endsWith('-tip');
       const radius = name === 'palm' ? 0.055 : tip ? 0.018 : 0.024;
       const visual = trackedJointVisual(entry, name, radius * 0.58);
-      visual.position.copy(joint.position);
+      const target = joint.getWorldPosition(new THREE.Vector3());
+      const previousCollision = entry.collisions.get(name) ?? target.clone();
+      const collision = resolveHandCollision(previousCollision, target, radius);
+      entry.collisions.set(name, collision.point.clone());
+      visual.position.copy(entry.hand.worldToLocal(collision.point.clone()));
+      entry.display.set(name, visual.position.clone());
       visual.quaternion.copy(joint.quaternion);
       visual.visible = true;
       if (!state.physics || delta <= 0) return;
-      const position = joint.getWorldPosition(new THREE.Vector3());
-      const previous = entry.previous.get(name) ?? position.clone();
-      const velocity = position.clone().sub(previous).multiplyScalar(1 / Math.max(delta, 1 / 120)).clampLength(0, 2.2);
-      entry.previous.set(name, position.clone());
+      const previous = entry.previous.get(name) ?? target.clone();
+      const velocity = target.clone().sub(previous).multiplyScalar(1 / Math.max(delta, 1 / 120)).clampLength(0, 2.2);
+      entry.previous.set(name, target.clone());
       state.models.filter((model) => model.visible).forEach((model) => {
-        touchPhysics(model, position, velocity, radius, delta);
+        touchPhysics(model, collision.point, velocity, radius, delta);
       });
     });
     trackedHandBones.forEach(([from, to]) => {
       const a = joints[from];
       const b = joints[to];
       if (!a?.visible || !b?.visible) return;
-      const delta = b.position.clone().sub(a.position);
+      // Use the constrained proxy positions whenever available, so the
+      // visible fingers do not draw through a surface that stopped a tip.
+      const fromPosition = entry.display.get(from) ?? a.position;
+      const toPosition = entry.display.get(to) ?? b.position;
+      const delta = toPosition.clone().sub(fromPosition);
       const length = delta.length();
       if (length < 0.001) return;
       const bone = trackedBoneVisual(entry, `${from}-${to}`);
-      bone.position.copy(a.position).lerp(b.position, 0.5);
+      bone.position.copy(fromPosition).lerp(toPosition, 0.5);
       bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
       bone.scale.set(1, length, 1);
       bone.visible = true;
