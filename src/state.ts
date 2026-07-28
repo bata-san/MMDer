@@ -1,6 +1,6 @@
 import type { AppState, BodyRegion, PhysicsPart, PhysicsPartSettings } from './types.js';
 
-export const BUILD_VERSION = 'v4.2.0';
+export const BUILD_VERSION = 'v5.1.0';
 
 const physicsPart = (
   response: number,
