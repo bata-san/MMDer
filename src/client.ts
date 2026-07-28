@@ -18,7 +18,7 @@ interface Preferences {
   activeTab: string;
 }
 
-const BUILD_VERSION = 'v5.1.0';
+const BUILD_VERSION = 'v6.0.0';
 const PREFERENCE_KEY = 'mmd-lab-preferences-v4';
 const LEGACY_KEYS = ['mmd-lab-preferences-v3', 'mmd-lab-preferences-v2'];
 const EXCLUDED_CONTROL_IDS = new Set([
