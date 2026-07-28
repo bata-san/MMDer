@@ -339,6 +339,7 @@ export function Editor() {
           <Button size="sm" onClick={() => motion.current?.click()}>
             モーション追加
           </Button>
+          <span id="xr-button-mount" className="inline-flex" />
         </div>
       </header>
       <aside className="relative overflow-hidden border-r">

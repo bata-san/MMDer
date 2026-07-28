@@ -287,7 +287,10 @@ export function setupXr(): void {
   createControllerRay(0);
   createControllerRay(1);
   const xrButton = createXrConnectButton();
-  document.querySelector('.status')?.append(xrButton);
+  // Keep the WebXR connection control beside the PC authoring controls.
+  const mount = document.querySelector('#xr-button-mount')
+    ?? document.querySelector('header');
+  mount?.append(xrButton);
   renderer.xr.addEventListener('sessionstart', () => {
     state.xrPresenting = true;
     // Keep desktop controls and the React editor live. The headset is a
