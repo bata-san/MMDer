@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 
-const BUILD_VERSION = 'v5.1.0';
+const BUILD_VERSION = 'v6.0.0';
 
 function cloudflareShell(): Plugin {
   return {
