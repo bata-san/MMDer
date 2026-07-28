@@ -3,6 +3,7 @@ import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '../style.css';
 import '../theme-performance.css';
 import '../life-system.css';
+import { mountNotionKitToolbar } from './notion-kit-toolbar.js';
 
 type Theme = 'dark' | 'light';
 type SavedControl =
@@ -335,6 +336,7 @@ function showFatal(error: unknown): void {
 }
 
 async function main(): Promise<void> {
+  mountNotionKitToolbar();
   installShell();
   const preferences = readPreferences();
   applyNaturalDefaults(preferences);
