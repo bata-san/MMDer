@@ -1,3 +1,7 @@
 node_modules/
+build/
+runtime/
+.wrangler/
+worker-configuration.d.ts
 .DS_Store
 *.log
