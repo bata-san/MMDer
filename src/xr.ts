@@ -12,6 +12,15 @@ type XrAction = 'previous' | 'next' | 'down' | 'up' | 'reset';
 
 const xrRaycaster = new THREE.Raycaster();
 const xrHands: Array<{ controller: any; collider: any; previous: any; velocity: any }> = [];
+const trackedHandJoints = ['wrist', 'palm', 'thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+const trackedHandBones = [
+  ['wrist', 'thumb-metacarpal'], ['thumb-metacarpal', 'thumb-phalanx-proximal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'], ['thumb-phalanx-distal', 'thumb-tip'],
+  ['wrist', 'index-finger-metacarpal'], ['index-finger-metacarpal', 'index-finger-phalanx-proximal'], ['index-finger-phalanx-proximal', 'index-finger-phalanx-intermediate'], ['index-finger-phalanx-intermediate', 'index-finger-phalanx-distal'], ['index-finger-phalanx-distal', 'index-finger-tip'],
+  ['wrist', 'middle-finger-metacarpal'], ['middle-finger-metacarpal', 'middle-finger-phalanx-proximal'], ['middle-finger-phalanx-proximal', 'middle-finger-phalanx-intermediate'], ['middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal'], ['middle-finger-phalanx-distal', 'middle-finger-tip'],
+  ['wrist', 'ring-finger-metacarpal'], ['ring-finger-metacarpal', 'ring-finger-phalanx-proximal'], ['ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate'], ['ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal'], ['ring-finger-phalanx-distal', 'ring-finger-tip'],
+  ['wrist', 'pinky-finger-metacarpal'], ['pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal'], ['pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate'], ['pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal'], ['pinky-finger-phalanx-distal', 'pinky-finger-tip'],
+];
+const trackedHands: Array<{ hand: any; previous: Map<string, any>; visuals: Map<string, any>; bones: Map<string, any> }> = [];
 const xrUi = new THREE.Group();
 xrUi.name = 'XR_MORPH_PANEL';
 xrUi.visible = false;
@@ -296,7 +305,90 @@ function createControllerHand(index: number): void {
   });
 }
 
+function createTrackedHand(index: number): void {
+  const hand = renderer.xr.getHand(index);
+  hand.name = `XR_TRACKED_HAND_${index}`;
+  hand.userData.xrHandTracking = true;
+  scene.add(hand);
+  trackedHands.push({ hand, previous: new Map(), visuals: new Map(), bones: new Map() });
+}
+
+function trackedJointVisual(entry: { hand: any; visuals: Map<string, any> }, name: string, radius: number): any {
+  let mesh = entry.visuals.get(name);
+  if (mesh) return mesh;
+  mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xb7e5ff, emissive: 0x174c72, emissiveIntensity: 0.35, roughness: 0.45 }),
+  );
+  mesh.name = `XR_HAND_JOINT_${name}`;
+  entry.hand.add(mesh);
+  entry.visuals.set(name, mesh);
+  return mesh;
+}
+
+function trackedBoneVisual(entry: { hand: any; bones: Map<string, any> }, key: string): any {
+  let mesh = entry.bones.get(key);
+  if (mesh) return mesh;
+  mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.007, 0.011, 1, 8),
+    new THREE.MeshStandardMaterial({ color: 0x7ccaff, emissive: 0x123a5b, emissiveIntensity: 0.28, roughness: 0.42 }),
+  );
+  mesh.name = `XR_HAND_BONE_${key}`;
+  entry.hand.add(mesh);
+  entry.bones.set(key, mesh);
+  return mesh;
+}
+
+function updateTrackedHandContacts(delta: number): boolean {
+  let tracking = false;
+  trackedHands.forEach((entry) => {
+    entry.visuals.forEach((visual) => { visual.visible = false; });
+    entry.bones.forEach((bone) => { bone.visible = false; });
+    const joints = entry.hand.joints ?? {};
+    trackedHandJoints.forEach((name) => {
+      const joint = joints[name];
+      if (!joint?.visible) return;
+      tracking = true;
+      const tip = name.endsWith('-tip');
+      const radius = name === 'palm' ? 0.055 : tip ? 0.018 : 0.024;
+      const visual = trackedJointVisual(entry, name, radius * 0.58);
+      visual.position.copy(joint.position);
+      visual.quaternion.copy(joint.quaternion);
+      visual.visible = true;
+      if (!state.physics || delta <= 0) return;
+      const position = joint.getWorldPosition(new THREE.Vector3());
+      const previous = entry.previous.get(name) ?? position.clone();
+      const velocity = position.clone().sub(previous).multiplyScalar(1 / Math.max(delta, 1 / 120)).clampLength(0, 2.2);
+      entry.previous.set(name, position.clone());
+      state.models.filter((model) => model.visible).forEach((model) => {
+        touchPhysics(model, position, velocity, radius, delta);
+      });
+    });
+    trackedHandBones.forEach(([from, to]) => {
+      const a = joints[from];
+      const b = joints[to];
+      if (!a?.visible || !b?.visible) return;
+      const delta = b.position.clone().sub(a.position);
+      const length = delta.length();
+      if (length < 0.001) return;
+      const bone = trackedBoneVisual(entry, `${from}-${to}`);
+      bone.position.copy(a.position).lerp(b.position, 0.5);
+      bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+      bone.scale.set(1, length, 1);
+      bone.visible = true;
+    });
+  });
+  return tracking;
+}
+
 function updateHandContacts(delta: number): void {
+  // A real tracked hand is the authoritative collider. Controller proxies
+  // remain only as a fallback for devices without hand tracking.
+  if (updateTrackedHandContacts(delta)) {
+    xrHands.forEach((hand) => { hand.collider.parent.visible = false; });
+    return;
+  }
+  xrHands.forEach((hand) => { hand.collider.parent.visible = true; });
   if (!state.physics || delta <= 0) return;
   xrHands.forEach((hand) => {
     const position = hand.collider.getWorldPosition(new THREE.Vector3());
@@ -385,6 +477,8 @@ export function setupXr(): void {
   createControllerRay(1);
   createControllerHand(0);
   createControllerHand(1);
+  createTrackedHand(0);
+  createTrackedHand(1);
   const xrButton = createXrConnectButton();
   // Keep the WebXR connection control beside the PC authoring controls.
   const mount = document.querySelector('#xr-button-mount')
