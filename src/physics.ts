@@ -133,9 +133,11 @@ export function applyPhysicsSettings(item: SceneModel | null = state.active): vo
     body.setDamping?.(linear, angular);
     body.setFriction?.(0.2 + stiffness * 0.32 + (1 - response) * 0.14);
     body.setRestitution?.(0);
-    body.setSleepingThresholds?.(0.025, 0.05);
-    body.setActivationState?.(4);
-    body.activate?.(true);
+    // `4` is DISABLE_DEACTIVATION in Bullet.  Keeping every accessory awake
+    // forever makes an otherwise resting chain visibly tremble.  Let Bullet
+    // sleep settled bodies and wake them only when wind or direct manipulation
+    // actually applies a force.
+    body.setSleepingThresholds?.(0.08, 0.12);
   });
   runtime.engine.constraints?.forEach((wrapper: any) => configureConstraint(wrapper, stiffness));
 }
@@ -221,13 +223,19 @@ function applyForces(item: SceneModel, time: number): void {
     const dragY = velocity ? -velocity.y() * air * (0.05 + response * 0.04) * mass : 0;
     const dragZ = velocity ? -velocity.z() * air * (0.08 + response * 0.06) * mass : 0;
     const gravityCorrection = -98 * gravity * (tuning.gravity - 1) * mass;
-    const force = new Ammo.btVector3(
-      (gust + dragX) * response,
-      (vertical + dragY + gravityCorrection) * response,
-      (lateral + dragZ) * response,
-    );
-    body.applyCentralForce?.(force);
-    Ammo.destroy(force);
+    const forceX = (gust + dragX) * response;
+    const forceY = (vertical + dragY + gravityCorrection) * response;
+    const forceZ = (lateral + dragZ) * response;
+    const forceLengthSq = forceX * forceX + forceY * forceY + forceZ * forceZ;
+
+    // Do not wake bodies with a zero force every simulation tick.  This is
+    // especially important when wind is disabled, which is the normal state.
+    if (forceLengthSq > 0.000001) {
+      const force = new Ammo.btVector3(forceX, forceY, forceZ);
+      body.activate?.(true);
+      body.applyCentralForce?.(force);
+      Ammo.destroy(force);
+    }
   });
 }
 
