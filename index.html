@@ -25,9 +25,9 @@
       <div class="panel-heading"><div><p class="eyebrow">WORKSPACE</p><h1>アセット</h1></div><label class="panel-close" for="library-toggle" aria-label="閉じる">×</label></div>
 
       <section class="load-actions">
-        <button class="primary" id="open-models"><span>＋</span>モデル</button>
-        <button id="open-motions"><span>＋</span>モーション</button>
-        <button class="compact-action" id="open-folder" title="関連テクスチャを含むフォルダを追加">フォルダ</button>
+        <sl-button class="primary" id="open-models" variant="primary" size="small">＋ モデル</sl-button>
+        <sl-button id="open-motions" size="small">＋ モーション</sl-button>
+        <sl-button class="compact-action" id="open-folder" size="small" title="関連テクスチャを含むフォルダを追加">フォルダ</sl-button>
         <input id="models-file" type="file" multiple accept=".pmx,.pmd,.zip" hidden />
         <input id="motions-file" type="file" multiple accept=".vmd,.vpd" hidden />
         <input id="folder" type="file" webkitdirectory multiple hidden />
@@ -35,7 +35,7 @@
 
       <section class="scene-model-section">
         <div class="section-title"><span>シーン <small id="selected-count">0 selected</small></span><button class="icon danger" id="clear-models" title="すべて削除">CLEAR</button></div>
-        <div class="model-toolbar"><button id="select-all-models">全選択</button><button id="clear-selection">解除</button><button id="arrange-models">整列</button></div>
+        <div class="model-toolbar"><sl-button id="select-all-models" size="small">全選択</sl-button><sl-button id="clear-selection" size="small">解除</sl-button><sl-button id="arrange-models" size="small">整列</sl-button></div>
         <div id="models" class="asset-list scene-list"><div class="empty">モデルを読み込むと<br />ここに表示されます</div></div>
       </section>
 
@@ -59,7 +59,7 @@
           <div class="transport"><button id="play" class="play" aria-label="再生・一時停止">❚❚</button><input id="timeline" type="range" min="0" max="1" step="0.001" value="0" /><button id="loop" class="toggle active" title="ループ">↻</button></div>
           <div class="field-row"><label for="motion-scope">適用先</label><select id="motion-scope"><option value="active">アクティブ</option><option value="selected" selected>選択モデル</option><option value="all">すべて</option></select></div>
         </section>
-        <section class="control-card"><div class="section-title"><span>クイック操作</span></div><div class="button-row"><button id="restart-motion">最初から</button><button id="sync-motion">時間を同期</button></div><p class="muted">標準待機モーションはモデル読み込み時に自動適用されます。</p></section>
+        <section class="control-card"><div class="section-title"><span>クイック操作</span></div><div class="button-row"><sl-button id="restart-motion" size="small">最初から</sl-button><sl-button id="sync-motion" size="small">時間を同期</sl-button></div><p class="muted">標準待機モーションはモデル読み込み時に自動適用されます。</p></section>
         <details class="advanced-block"><summary>切り替えとループの詳細</summary><div class="advanced-body"><label>モーション切替 <output id="motion-blend-value">0.22s</output></label><input id="motion-blend" type="range" min=".04" max=".8" step=".01" value=".22" /><label>ループ継ぎ目 <output id="loop-blend-value">0.38s</output></label><input id="loop-blend" type="range" min="0" max=".8" step=".01" value=".38" /></div></details>
       </div>
 
