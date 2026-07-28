@@ -86,8 +86,10 @@ export const state: AppState = {
     swayIrregularity: 0.5,
     inertiaResponse: 0.68,
     postureRecovery: 0.5,
-    weightShift: 0.46,
-    footReplant: 0.42,
+    // Weight-shift/stepping is intentionally paused while the gait solver is
+    // being reworked. Other life features (blink, gaze, expressions) remain.
+    weightShift: 0,
+    footReplant: 0,
     segments,
   },
   interactionSettings: {

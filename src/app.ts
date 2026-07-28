@@ -14,7 +14,7 @@ import {
   resizeScene,
   setRenderScale,
 } from "./scene.js";
-import { setupXr } from "./xr.js";
+import { setupXr, updateXr } from "./xr.js";
 
 let frameCount = 0;
 let fpsStartedAt = performance.now();
@@ -59,6 +59,7 @@ function animate(): void {
     // MMDPhysics also needs regular steps to settle a body after a pull.
     if (state.physics) stepPhysics(model, delta, state.elapsed);
   });
+  updateXr(delta);
   updateTimeline();
   updateInteraction(delta);
   updateRigHandles();
