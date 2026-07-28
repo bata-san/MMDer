@@ -463,6 +463,12 @@ footer {
   display: none;
 }
 
+#notion-kit-toolbar, #notion-kit-tabs { display: flex; align-items: center; }
+.nk-toolbar, .nk-tabs { display: flex; align-items: center; gap: 4px; }
+.nk-tabs { padding: 7px 10px; border-bottom: 1px solid #29405d; overflow-x: auto; }
+.nk-tabs .nk-tab-active { box-shadow: inset 0 0 0 1px rgba(121, 168, 255, .5); }
+#notion-kit-tabs + .tabs { display: none; }
+
 /* Compact desktop density: keep the stage as the primary surface. */
 @media (min-width: 761px) {
   .app-bar {
