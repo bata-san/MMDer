@@ -1,4 +1,5 @@
 import '../style.css';
+import { mountWorkbench } from './workbench.js';
 import { mountNotionKitTabs, mountNotionKitToolbar } from './notion-kit-toolbar.js';
 
 type Theme = 'dark' | 'light';
@@ -332,6 +333,7 @@ function showFatal(error: unknown): void {
 }
 
 async function main(): Promise<void> {
+  mountWorkbench();
   mountNotionKitToolbar();
   mountNotionKitTabs();
   installShell();

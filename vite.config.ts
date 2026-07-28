@@ -1,4 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
+import { resolve } from 'node:path';
 
 const BUILD_VERSION = 'v6.0.0';
 
@@ -23,7 +25,8 @@ function cloudflareShell(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [cloudflareShell()],
+  plugins: [tailwindcss(), cloudflareShell()],
+  resolve: { alias: { '@': resolve(__dirname, './src') } },
   publicDir: false,
   build: {
     outDir: 'build/client',
