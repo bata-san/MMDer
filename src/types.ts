@@ -138,6 +138,8 @@ export interface LifeController {
   forceFootStep: boolean;
   /** Test-only COM offset used by the life lab; zero during normal editing. */
   balanceTestOffsetX: number;
+  /** Persistent local correction that keeps the pelvis above the support midpoint. */
+  balanceCenterOffsetX: number;
   leftLegIk?: LegIkChain;
   rightLegIk?: LegIkChain;
 }

@@ -269,6 +269,7 @@ export function createLifeController(
     footStepScale: 1,
     forceFootStep: false,
     balanceTestOffsetX: 0,
+    balanceCenterOffsetX: 0,
   };
 }
 
@@ -501,14 +502,25 @@ function stance(life: LifeController, motion: MotionController): void {
   if (!life.footStepSide) {
     setTarget(left, lc, motion);
     setTarget(right, rc, motion);
-    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
+    applyPosition(
+      life.centerPosition,
+      new THREE.Vector3(life.balanceCenterOffsetX, 0, 0),
+      motion,
+    );
   } else {
     const p = THREE.MathUtils.clamp(
-      (life.lifeTime - life.footStepStartedAt) / 0.82,
+      (life.lifeTime - life.footStepStartedAt) / 1.08,
       0,
       1,
     );
-    const e = minimumJerk(p);
+    // A step is three distinct actions: deliberately move the mass over the
+    // support leg, lift/replant the free foot, then return mass to the centre
+    // of the new support interval.  The separate phases prevent the common
+    // "foot moves first, body follows" robotic look.
+    const shiftIn = minimumJerk(THREE.MathUtils.clamp(p / 0.28, 0, 1));
+    const shiftOut = minimumJerk(THREE.MathUtils.clamp((p - 0.72) / 0.28, 0, 1));
+    const weightOnSupport = p < 0.28 ? shiftIn : p < 0.72 ? 1 : 1 - shiftOut;
+    const stepE = minimumJerk(THREE.MathUtils.clamp((p - 0.28) / 0.44, 0, 1));
     const swing = life.footStepSide === "left" ? left : right;
     const planted = life.footStepSide === "left" ? right : left;
     const start = swing.plantedTarget
@@ -520,8 +532,8 @@ function stance(life: LifeController, motion: MotionController): void {
     // The support correction chooses the foot; it must not pull the swing
     // controller through the other leg. Keep this corrective first step
     // vertical and let a later planted step establish lateral spacing.
-    const target = start.lerp(end, e);
-    target.y += Math.sin(Math.PI * e) * 0.14;
+    const target = start.lerp(end, stepE);
+    target.y += Math.sin(Math.PI * stepE) * 0.14;
     const plantedGoal = planted.plantedTarget
       .clone()
       .setY(planted.floorHeight + planted.contactOffset);
@@ -534,8 +546,29 @@ function stance(life: LifeController, motion: MotionController): void {
     }
     setTarget(swing, target, motion);
     setTarget(planted, plantedGoal, motion);
-    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
+    const supportOffset = life.footStepSide === "left" ? 0.045 : -0.045;
+    applyPosition(
+      life.centerPosition,
+      new THREE.Vector3(
+        life.balanceCenterOffsetX + supportOffset * weightOnSupport,
+        0,
+        0,
+      ),
+      motion,
+    );
     if (p >= 1) {
+      // Calibrate the persistent centre using the actual pelvis world point,
+      // not the centre bone's zero pose.  This keeps the COM inside the new
+      // support interval on models whose rest rig is asymmetric.
+      const midpoint = leftGoal.clone().add(rightGoal).multiplyScalar(0.5);
+      const currentPelvis = (life.body.hips?.bone ?? life.body.center?.bone)?.getWorldPosition(new THREE.Vector3());
+      if (currentPelvis) {
+        life.balanceCenterOffsetX += THREE.MathUtils.clamp(
+          midpoint.x - currentPelvis.x,
+          -0.12,
+          0.12,
+        );
+      }
       swing.plantedTarget.copy(end).setY(swing.restTarget.y);
       life.footStepSide = null;
       life.forceFootStep = false;

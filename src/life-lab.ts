@@ -94,6 +94,8 @@ export async function startLifeLab(): Promise<void> {
     );
     const leftBefore = life.leftFootIk.plantedTarget.clone();
     const rightBefore = life.rightFootIk.plantedTarget.clone();
+    const centerBone = life.centerPosition?.bone ?? life.body.hips?.bone;
+    const centerBefore = centerBone?.getWorldPosition(new THREE.Vector3()) ?? new THREE.Vector3();
     const rightIkBones = new Set<number>((life.rightFootIk.solver.iks?.[0]?.links ?? []).map((link: any) => Number(link.index)));
     // PMX commonly skins the leg with D bones that inherit rotation from the
     // CCD links, rather than with the links themselves.
@@ -112,13 +114,12 @@ export async function startLifeLab(): Promise<void> {
     life.gazeElapsed = life.gazeDuration;
     life.nextGazeAt = Number.POSITIVE_INFINITY;
     life.nextMicroAt = Number.POSITIVE_INFINITY;
-    // Drive a deterministic 0.4 s slice so the lab does not depend on the
-    // browser animation scheduler while loading a PMX.
-    // First update starts the corrective step; the second samples the middle
-    // of that step.  A single 0.4 s update starts at p=0 and cannot test leg
-    // bending.
+    // First sample the active mass shift, then the middle of the free-foot
+    // swing. This verifies the intended shift → step → centre sequence.
     updateLife(life, item.motion, 0, false);
-    updateLife(life, item.motion, 0.4, false);
+    updateLife(life, item.motion, 0.24, false);
+    const centerOnSupport = centerBone?.getWorldPosition(new THREE.Vector3()) ?? new THREE.Vector3();
+    updateLife(life, item.motion, 0.24, false);
     await wait(20);
     const skinDelta = signatureDelta(skinBefore, skinnedSignature(item.mesh, rightIkBones));
 
@@ -158,7 +159,17 @@ export async function startLifeLab(): Promise<void> {
       : leftTarget.y -
         life.leftFootIk.contactOffset -
         life.leftFootIk.floorHeight;
-    const pass = eyeDelta > 0.01 && supportError < 0.04 && swingLift > 0.01 && skinDelta > 0.002;
+    // Complete the final return-to-centre phase after capturing the swing
+    // measurements. The controller then releases its temporary centre offset.
+    updateLife(life, item.motion, 0.64, false);
+    // Apply the newly calibrated persistent centre offset on the idle frame.
+    updateLife(life, item.motion, 0, false);
+    item.mesh.updateWorldMatrix(true, true);
+    const centerAfter = centerBone?.getWorldPosition(new THREE.Vector3()) ?? new THREE.Vector3();
+    const finalSupportMid = life.leftFootIk.plantedTarget.clone().add(life.rightFootIk.plantedTarget).multiplyScalar(0.5);
+    const massShift = Math.abs(centerOnSupport.x - centerBefore.x);
+    const recenterError = Math.abs(centerAfter.x - finalSupportMid.x);
+    const pass = eyeDelta > 0.01 && supportError < 0.04 && swingLift > 0.01 && skinDelta > 0.002 && massShift > 0.004 && recenterError < 0.08;
 
     item.mesh.updateWorldMatrix(true, true);
     const bounds = new THREE.Box3().setFromObject(item.mesh);
@@ -191,6 +202,7 @@ export async function startLifeLab(): Promise<void> {
       .map(({ bone, quaternion }) => `${bone.name}:${THREE.MathUtils.radToDeg(2 * Math.acos(THREE.MathUtils.clamp(Math.abs(quaternion.dot(bone.quaternion)), -1, 1))).toFixed(3)}deg`)
       .join("\n")}`;
     report.title += `\nSkinned vertex delta: ${skinDelta.toFixed(6)}`;
+    report.title += `\nMass shift: ${massShift.toFixed(6)}; centre error: ${recenterError.toFixed(6)}`;
     report.textContent = `LIFE LAB — 接地・重心・視線の統合検証\nモデル: ${item.name}\n右脚IKリンク: ${solverBones}\n\nCOM判定: 支持域外 → ${steppingRight ? "右足" : "左足"}を踏み直し\n支持幅: ${supportWidth.toFixed(4)}\n左足移動: ${leftTravel.toFixed(4)}\n右足移動: ${rightTravel.toFixed(4)}\n\n支持脚の接地誤差: ${supportError.toFixed(4)}\n遊脚リフト: ${swingLift.toFixed(4)}\n左ターゲット: ${leftTarget.y.toFixed(4)} / ${life.leftFootIk.contactOffset.toFixed(4)}\n右ターゲット: ${rightTarget.y.toFixed(4)} / ${life.rightFootIk.contactOffset.toFixed(4)}\n視線ボーン回転: ${THREE.MathUtils.radToDeg(eyeDelta).toFixed(2)}°\n\n${pass ? "PASS: 加算視線 / COM踏み直し / 接地アンカーを確認" : "FAIL: 実メッシュ検証が未達"}`;
   } catch (error) {
     report.textContent = `LIFE LAB FAILED\n${error instanceof Error ? error.message : String(error)}`;
