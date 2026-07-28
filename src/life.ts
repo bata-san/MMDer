@@ -383,6 +383,17 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   const settings = state.lifeSettings;
   const zero = new THREE.Vector3();
   const moving = life.anchorVelocity.length() > 0.42;
+  const leftPosition = life.leftFoot?.bone.getWorldPosition?.(new THREE.Vector3());
+  const rightPosition = life.rightFoot?.bone.getWorldPosition?.(new THREE.Vector3());
+  const upper = life.body.spineUpper?.bone ?? life.body.spineLower?.bone;
+  const upperQuaternion = upper?.getWorldQuaternion?.(new THREE.Quaternion());
+  const upperUp = upperQuaternion ? new THREE.Vector3(0, 1, 0).applyQuaternion(upperQuaternion) : null;
+  const supportCenter = leftPosition && rightPosition ? leftPosition.clone().add(rightPosition).multiplyScalar(0.5) : null;
+  const supportWidth = leftPosition && rightPosition ? Math.max(0.12, Math.abs(leftPosition.x - rightPosition.x)) : 0.42;
+  const lateralLean = supportCenter ? life.anchorPosition.x - supportCenter.x : 0;
+  const rollLean = upperUp ? Math.asin(THREE.MathUtils.clamp(upperUp.x, -1, 1)) : 0;
+  const offBalance = Math.abs(lateralLean) > supportWidth * 0.18 || Math.abs(rollLean) > 0.13;
+  const correctionSide: 'left' | 'right' = lateralLean + rollLean * supportWidth > 0 ? 'right' : 'left';
   if (!settings.footReplant || moving) {
     life.footStepSide = null;
     life.nextFootStepAt = Math.max(life.nextFootStepAt, life.lifeTime + 1.6);
@@ -392,8 +403,8 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
     return;
   }
 
-  if (!life.footStepSide && life.lifeTime >= life.nextFootStepAt) {
-    life.footStepSide = Math.random() < 0.5 ? 'left' : 'right';
+  if (!life.footStepSide && (offBalance || life.lifeTime >= life.nextFootStepAt)) {
+    life.footStepSide = offBalance ? correctionSide : Math.random() < 0.5 ? 'left' : 'right';
     life.footStepStartedAt = life.lifeTime;
   }
   const cycle = life.footStepSide ? (life.lifeTime - life.footStepStartedAt) / 0.72 : 0;
