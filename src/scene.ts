@@ -318,6 +318,9 @@ export function setRenderScale(value: number): void {
 }
 
 export function resizeScene(): void {
+  // WebXR owns the drawing-buffer dimensions while presenting. React layout
+  // changes (for example a slider redraw) must not call setSize in a session.
+  if (state.xrPresenting) return;
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   if (!state.xrPresenting) renderer.setPixelRatio(desktopPixelRatio());

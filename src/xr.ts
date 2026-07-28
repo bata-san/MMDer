@@ -135,8 +135,15 @@ function refreshMorphPanel(): void {
 
 function haptic(controller: any): void {
   const session = renderer.xr.getSession();
-  const source = session?.inputSources?.find((input: any) => input.targetRaySpace === controller.userData.xrTargetRaySpace);
-  source?.gamepad?.hapticActuators?.[0]?.pulse?.(0.28, 28).catch?.(() => undefined);
+  // XRInputSourceArray is iterable but not a JavaScript Array on several
+  // wired OpenXR runtimes, so never call Array.prototype methods on it.
+  const sources = session?.inputSources ? Array.from(session.inputSources as any) : [];
+  const source = sources.find((input: any) => input.targetRaySpace === controller.userData.xrTargetRaySpace) as any;
+  try {
+    void source?.gamepad?.hapticActuators?.[0]?.pulse?.(0.28, 28);
+  } catch {
+    // Haptics are optional; losing them must not break the controller UI.
+  }
 }
 
 function applyXrAction(action: XrAction, controller: any): boolean {
@@ -209,7 +216,7 @@ function applyStickLocomotion(delta: number): void {
   if (!session) return;
   let sideways = 0;
   let forwardInput = 0;
-  for (const source of session.inputSources as any) {
+  for (const source of Array.from(session.inputSources as any) as any[]) {
     const axes = source.gamepad?.axes as number[] | undefined;
     if (!axes?.length) continue;
     // OpenXR controllers conventionally expose the thumbstick as the final
