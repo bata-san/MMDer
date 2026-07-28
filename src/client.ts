@@ -12,5 +12,9 @@ void (async () => {
   if (!canvas || !viewport) throw new Error('Editor viewport failed to mount.');
   viewport.append(canvas);
   await import('../runtime/app.js');
+  if (new URLSearchParams(location.search).has('ik-lab')) {
+    const { startIkLab } = await import('./ik-lab');
+    void startIkLab();
+  }
   window.dispatchEvent(new Event('resize'));
 })();

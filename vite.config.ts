@@ -26,6 +26,7 @@ function cloudflareShell(): Plugin {
 
 export default defineConfig({
   plugins: [tailwindcss(), cloudflareShell()],
+  server: { fs: { strict: false } },
   resolve: { alias: { '@': resolve(__dirname, './src') } },
   publicDir: false,
   build: {
