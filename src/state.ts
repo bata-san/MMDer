@@ -93,7 +93,9 @@ export const state: AppState = {
     pokeRadius: 0.85,
     pullStrength: 18,
     pullDamping: 3.5,
-    pullRadius: 1.2,
+    // This is a picking tolerance, not an area-of-effect.  Keep it small so a
+    // drag locks to one hair / cloth rigid body close to the clicked point.
+    pullRadius: 0.32,
   },
   xrPresenting: false,
   renderScale: 1,

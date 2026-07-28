@@ -9,6 +9,7 @@ import {
   updatePhysicsPull,
   type PhysicsPullHandle,
 } from './physics.js';
+import { toast } from './dom.js';
 import { camera, canvas, controls, pointer, raycaster, scene, stage } from './scene.js';
 import { state } from './state.js';
 import type { SceneModel } from './types.js';
@@ -113,7 +114,10 @@ async function pokePicked(hit: PickResult): Promise<void> {
 async function beginPull(hit: PickResult, event: PointerEvent): Promise<void> {
   if (!await ensurePhysics(hit.model)) return;
   pullHandle = beginPhysicsPull(hit.model, hit.point, state.interactionSettings.pullRadius);
-  if (!pullHandle) return;
+  if (!pullHandle) {
+    toast('この位置にはつかめる物理ボディがありません。髪や布の近くをクリックしてください。');
+    return;
+  }
   dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), hit.point);
   setPointer(event);
   const world = new THREE.Vector3();

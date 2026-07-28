@@ -282,6 +282,8 @@ export function pokePhysics(item: SceneModel, point: any, direction: any, streng
 export function beginPhysicsPull(item: SceneModel, point: any, radius: number): PhysicsPullHandle | null {
   const hit = findNearestPhysicsBody(item, point, radius);
   if (!hit) return null;
+  // A pull always owns exactly one dynamic rigid body.  This intentionally
+  // differs from pokePhysics, which distributes an impulse over an area.
   return { ...hit, localOffset: point.clone().sub(hit.position) };
 }
 
