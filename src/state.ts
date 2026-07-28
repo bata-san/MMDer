@@ -91,6 +91,7 @@ export const state: AppState = {
     dragResponse: 0.72,
     pokeStrength: 1.2,
     pokeRadius: 0.85,
+    shockwaveSpeed: 1.5,
     pullStrength: 18,
     pullDamping: 3.5,
     // This is a picking tolerance, not an area-of-effect.  Keep it small so a

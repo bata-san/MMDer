@@ -964,7 +964,7 @@ export function Editor() {
                   }}
                 />
                 <Control
-                  label="押す強さ"
+                  label="衝撃波の強さ"
                   value={state.interactionSettings.pokeStrength}
                   min={0}
                   max={50}
@@ -974,13 +974,23 @@ export function Editor() {
                   }}
                 />
                 <Control
-                  label="押す範囲"
+                  label="衝撃波の範囲"
                   value={state.interactionSettings.pokeRadius}
                   min={0.05}
                   max={3}
                   step={0.01}
                   onChange={(v) => {
                     state.interactionSettings.pokeRadius = v;
+                  }}
+                />
+                <Control
+                  label="衝撃波の速さ"
+                  value={state.interactionSettings.shockwaveSpeed}
+                  min={0.2}
+                  max={4}
+                  step={0.05}
+                  onChange={(v) => {
+                    state.interactionSettings.shockwaveSpeed = v;
                   }}
                 />
                 <Control

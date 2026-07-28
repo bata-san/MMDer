@@ -160,6 +160,7 @@ export interface InteractionSettings {
   dragResponse: number;
   pokeStrength: number;
   pokeRadius: number;
+  shockwaveSpeed: number;
   pullStrength: number;
   pullDamping: number;
   pullRadius: number;

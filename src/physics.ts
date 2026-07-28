@@ -23,6 +23,20 @@ export interface PhysicsPullHandle extends PhysicsBodyHit {
   localOffset: any;
 }
 
+interface PhysicsShockwave {
+  model: SceneModel;
+  origin: any;
+  direction: any;
+  strength: number;
+  radius: number;
+  speed: number;
+  age: number;
+  previousRadius: number;
+}
+
+const shockwaves: PhysicsShockwave[] = [];
+const restFrames = new WeakMap<object, number>();
+
 const PROFILES: PhysicsProfile[] = [
   { fixedStep: 1 / 60, maxSubSteps: 2, warmupSteps: 4 },
   { fixedStep: 1 / 72, maxSubSteps: 3, warmupSteps: 6 },
@@ -130,8 +144,12 @@ export function applyPhysicsSettings(item: SceneModel | null = state.active): vo
     }
     const partDamping = THREE.MathUtils.clamp(tuning.damping, 0, 1);
     const response = THREE.MathUtils.clamp(tuning.response, 0, 1.5);
-    const linear = Math.min(0.97, 0.035 + damping * 0.52 + air * 0.22 + partDamping * 0.22);
-    const angular = Math.min(0.985, 0.07 + damping * 0.62 + air * 0.3 + partDamping * 0.2);
+    const baseLinear = Math.min(0.97, 0.035 + damping * 0.52 + air * 0.22 + partDamping * 0.22);
+    const baseAngular = Math.min(0.985, 0.07 + damping * 0.62 + air * 0.3 + partDamping * 0.2);
+    // Soft-body chest rigs need significantly more damping than hair.  Their
+    // short constraints otherwise amplify tiny solver corrections into shake.
+    const linear = part === 'chest' ? Math.max(baseLinear, 0.72) : baseLinear;
+    const angular = part === 'chest' ? Math.max(baseAngular, 0.82) : baseAngular;
     body.setDamping?.(linear, angular);
     body.setFriction?.(0.2 + stiffness * 0.32 + (1 - response) * 0.14);
     body.setRestitution?.(0);
@@ -215,7 +233,11 @@ function applyForces(item: SceneModel, time: number): void {
     if (mass <= 0) return;
 
     const phase = time * 1.7 + index * 0.618;
-    const partWind = wind * tuning.wind;
+    // Wind belongs to dangling items. Applying it to torso/chest bodies makes
+    // them oscillate indefinitely and does not read as believable motion.
+    const partWind = part === 'chest' || part === 'torso' || part === 'hips'
+      ? 0
+      : wind * tuning.wind;
     const gust = partWind * (1 + Math.sin(phase) * turbulence * 0.55);
     const lateral = Math.cos(time * 0.83 + index * 0.37) * partWind * turbulence * 0.32;
     const vertical = Math.sin(time * 2.31 + index) * partWind * turbulence * 0.12;
@@ -258,23 +280,107 @@ export function findNearestPhysicsBody(item: SceneModel, point: any, radius: num
 }
 
 export function pokePhysics(item: SceneModel, point: any, direction: any, strength: number, radius: number): number {
-  const Ammo = window.Ammo;
-  if (!Ammo) return 0;
-  // Like grabbing, a poke targets one physical point rather than an
-  // unpredictable cluster of nearby hair and cloth bodies.
-  const hit = findNearestPhysicsBody(item, point, radius);
-  if (!hit) return 0;
-  const tuning = state.physicsSettings.parts[hit.part];
-  const impulseAmount = strength * (0.45 + tuning.response * 0.7);
-  const impulse = new Ammo.btVector3(
-    direction.x * impulseAmount,
-    direction.y * impulseAmount,
-    direction.z * impulseAmount,
-  );
-  hit.wrapper.body.activate?.(true);
-  hit.wrapper.body.applyCentralImpulse?.(impulse);
-  Ammo.destroy(impulse);
+  const hasAffectedBody = Boolean(findNearestPhysicsBody(item, point, radius));
+  if (!hasAffectedBody) return 0;
+  shockwaves.push({
+    model: item,
+    origin: point.clone(),
+    direction: direction.clone().normalize(),
+    strength,
+    radius: Math.max(0.05, radius),
+    speed: Math.max(0.2, state.interactionSettings.shockwaveSpeed),
+    age: 0,
+    previousRadius: 0,
+  });
   return 1;
+}
+
+function applyShockwaves(item: SceneModel, delta: number): void {
+  const Ammo = window.Ammo;
+  const bodies = item.physics?.engine?.bodies;
+  if (!Ammo || !bodies) return;
+  for (let index = shockwaves.length - 1; index >= 0; index -= 1) {
+    const wave = shockwaves[index];
+    if (wave.model !== item) continue;
+    wave.age += Math.max(0, delta);
+    const currentRadius = Math.min(wave.radius, wave.age * wave.speed * 8);
+    bodies.forEach((wrapper: any) => {
+      const body = wrapper.body;
+      if (!body || bodyMass(body) <= 0) return;
+      const part = partForBody(wrapper, item);
+      const tuning = state.physicsSettings.parts[part];
+      if (!tuning.enabled) return;
+      const position = bodyPosition(wrapper);
+      if (!position) return;
+      const distance = position.distanceTo(wave.origin);
+      if (distance < wave.previousRadius || distance > currentRadius) return;
+      const falloff = 1 - Math.min(1, distance / wave.radius);
+      const outward = position.sub(wave.origin);
+      if (outward.lengthSq() < 0.0001) outward.copy(wave.direction);
+      else outward.normalize().lerp(wave.direction, 0.24).normalize();
+      const impulseAmount = wave.strength * falloff * (0.35 + tuning.response * 0.75);
+      const impulse = new Ammo.btVector3(
+        outward.x * impulseAmount,
+        outward.y * impulseAmount,
+        outward.z * impulseAmount,
+      );
+      body.activate?.(true);
+      body.applyCentralImpulse?.(impulse);
+      Ammo.destroy(impulse);
+    });
+    wave.previousRadius = currentRadius;
+    if (currentRadius >= wave.radius) shockwaves.splice(index, 1);
+  }
+}
+
+function vectorLength(vector: any): number {
+  if (!vector) return 0;
+  return Math.hypot(vector.x?.() ?? 0, vector.y?.() ?? 0, vector.z?.() ?? 0);
+}
+
+function stabilizeBodies(item: SceneModel): void {
+  const Ammo = window.Ammo;
+  const bodies = item.physics?.engine?.bodies;
+  if (!Ammo || !bodies) return;
+  bodies.forEach((wrapper: any) => {
+    const body = wrapper.body;
+    if (!body || bodyMass(body) <= 0) return;
+    const part = partForBody(wrapper, item);
+    const linearVelocity = body.getLinearVelocity?.();
+    const angularVelocity = body.getAngularVelocity?.();
+    const linearSpeed = vectorLength(linearVelocity);
+    const angularSpeed = vectorLength(angularVelocity);
+    const chest = part === 'chest';
+    const maxLinear = chest ? 1.6 : 7;
+    const maxAngular = chest ? 2.4 : 9;
+    const settled = linearSpeed < (chest ? 0.045 : 0.02)
+      && angularSpeed < (chest ? 0.09 : 0.04);
+    const frames = settled ? (restFrames.get(body) ?? 0) + 1 : 0;
+    restFrames.set(body, frames);
+
+    if (frames >= (chest ? 10 : 20)) {
+      const zero = new Ammo.btVector3(0, 0, 0);
+      body.setLinearVelocity?.(zero);
+      body.setAngularVelocity?.(zero);
+      body.clearForces?.();
+      body.setActivationState?.(2);
+      Ammo.destroy(zero);
+      return;
+    }
+
+    if (linearSpeed > maxLinear && linearVelocity) {
+      const scale = maxLinear / linearSpeed;
+      const limited = new Ammo.btVector3(linearVelocity.x() * scale, linearVelocity.y() * scale, linearVelocity.z() * scale);
+      body.setLinearVelocity?.(limited);
+      Ammo.destroy(limited);
+    }
+    if (angularSpeed > maxAngular && angularVelocity) {
+      const scale = maxAngular / angularSpeed;
+      const limited = new Ammo.btVector3(angularVelocity.x() * scale, angularVelocity.y() * scale, angularVelocity.z() * scale);
+      body.setAngularVelocity?.(limited);
+      Ammo.destroy(limited);
+    }
+  });
 }
 
 export function beginPhysicsPull(item: SceneModel, point: any, radius: number): PhysicsPullHandle | null {
@@ -314,11 +420,13 @@ export function updatePhysicsPull(handle: PhysicsPullHandle, target: any, delta:
 export function stepPhysics(item: SceneModel, delta: number, time: number): void {
   const runtime = item.physics;
   if (!state.physics || !runtime?.enabled) return;
+  applyShockwaves(item, delta);
   runtime.accumulator = Math.min(runtime.accumulator + Math.min(delta, 0.05), runtime.fixedStep * runtime.maxSubSteps);
   let steps = 0;
   while (runtime.accumulator >= runtime.fixedStep && steps < runtime.maxSubSteps) {
     applyForces(item, time + steps * runtime.fixedStep);
     runtime.engine.update(runtime.fixedStep);
+    stabilizeBodies(item);
     runtime.accumulator -= runtime.fixedStep;
     steps += 1;
   }
