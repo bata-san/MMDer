@@ -483,6 +483,23 @@ function solveLegIk(chain: LegIkChain | undefined, target: any, motion: MotionCo
   chain.lastKneeOffset.copy(kneeBase.clone().invert().multiply(chain.knee.quaternion));
 }
 
+function syncLegDeformBones(mesh: any, side: 'left' | 'right'): void {
+  const prefix = side === 'left' ? '左' : '右';
+  const copy = (sourceName: string, destinationName: string) => {
+    const source = mesh.skeleton?.bones?.find((bone: any) => bone.name === sourceName);
+    const destination = mesh.skeleton?.bones?.find((bone: any) => bone.name === destinationName);
+    if (!source || !destination?.parent) return;
+    const position = source.getWorldPosition(new THREE.Vector3());
+    const quaternion = source.getWorldQuaternion(new THREE.Quaternion());
+    destination.position.copy(destination.parent.worldToLocal(position));
+    destination.quaternion.copy(destination.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(quaternion));
+    destination.updateWorldMatrix(true, true);
+  };
+  copy(`${prefix}足`, `${prefix}足D`);
+  copy(`${prefix}ひざ`, `${prefix}ひざD`);
+  copy(`${prefix}足首`, `${prefix}足首D`);
+}
+
 function clearBoneOffsets(life: LifeController, motion: MotionController): void {
   life.eyes.forEach((binding) => applyBoneOffset(binding, IDENTITY, motion));
   applyBoneOffset(life.jaw, IDENTITY, motion);
@@ -599,6 +616,7 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   if (leftStepping && life.leftFootIk) {
     applyPositionOffset(life.leftFootIk.binding, footOffset, motion);
     life.leftFootIk.solver.update();
+    syncLegDeformBones(life.mesh, 'left');
   } else if (leftStepping && life.leftLegIk) {
     const target = life.leftLegIk.ankle.getWorldPosition(new THREE.Vector3());
     target.x += footOffset.x;
@@ -612,6 +630,7 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   if (rightStepping && life.rightFootIk) {
     applyPositionOffset(life.rightFootIk.binding, footOffset, motion);
     life.rightFootIk.solver.update();
+    syncLegDeformBones(life.mesh, 'right');
   } else if (rightStepping && life.rightLegIk) {
     const target = life.rightLegIk.ankle.getWorldPosition(new THREE.Vector3());
     target.x += footOffset.x;
