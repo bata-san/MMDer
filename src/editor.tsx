@@ -192,6 +192,7 @@ export function Editor() {
   const [leftWidth, setLeftWidth] = useState(240);
   const [rightWidth, setRightWidth] = useState(340);
   const [dark, setDark] = useState(true);
+  const [xrMirroring, setXrMirroring] = useState(state.xrPresenting);
   const [morphQuery, setMorphQuery] = useState("");
   const [materialQuery, setMaterialQuery] = useState("");
   const [, redraw] = useState(0);
@@ -211,6 +212,11 @@ export function Editor() {
       stopModels();
       stopActive();
     };
+  }, []);
+  useEffect(() => {
+    const syncXr = () => setXrMirroring(state.xrPresenting);
+    window.addEventListener("mmdlab-xr-change", syncXr);
+    return () => window.removeEventListener("mmdlab-xr-change", syncXr);
   }, []);
   const addAssets = (files: FileList | null, immediate = false) => {
     if (!files?.length) return;
@@ -299,6 +305,11 @@ export function Editor() {
         <span className="rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
           {BUILD_VERSION}
         </span>
+        {xrMirroring && (
+          <span className="rounded border border-cyan-500/50 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-300">
+            VR表示中 — PC編集を同期
+          </span>
+        )}
         <div className="ml-auto flex gap-1">
           <Button
             size="icon"

@@ -63,7 +63,9 @@ function animate(): void {
   updateTimeline();
   updateInteraction(delta);
   updateRigHandles();
-  if (!state.xrPresenting) controls.update();
+  // The desktop remains the authoring surface while an XR headset presents
+  // the same stage. Updating desktop controls here keeps PC preparation live.
+  controls.update();
   renderScene();
   updatePerformance(performance.now());
 }

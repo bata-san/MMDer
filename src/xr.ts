@@ -223,13 +223,16 @@ export function setupXr(): void {
   document.querySelector('.status')?.append(xrButton);
   renderer.xr.addEventListener('sessionstart', () => {
     state.xrPresenting = true;
-    controls.enabled = false;
+    // Keep desktop controls and the React editor live. The headset is a
+    // presentation surface for the exact same scene, not a separate editor.
+    controls.enabled = true;
     setXrStageMode(true);
     renderer.setPixelRatio(1);
     renderer.xr.setFoveation?.(1);
     xrUi.visible = true;
     refreshMorphPanel();
-    setNotice('VRモード — 左手グリップでモーフパネル、右トリガーで操作');
+    window.dispatchEvent(new Event('mmdlab-xr-change'));
+    setNotice('VR表示中 — PCで準備・編集した内容をヘッドセットへ即時反映');
   });
   renderer.xr.addEventListener('sessionend', () => {
     state.xrPresenting = false;
@@ -237,6 +240,7 @@ export function setupXr(): void {
     xrUi.visible = false;
     setXrStageMode(false);
     resizeScene();
+    window.dispatchEvent(new Event('mmdlab-xr-change'));
     setNotice();
   });
 }
