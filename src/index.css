@@ -130,4 +130,4 @@
   html {
     @apply font-sans;
     }
-}@layer base { #viewport-canvas > canvas { position:absolute; inset:0; width:100%; height:100%; } }
+}@layer base { #viewport-canvas > canvas { position:absolute; inset:0; width:100%; height:100%; } .asset-scroll, .asset-scroll * { scrollbar-width: none; } .asset-scroll::-webkit-scrollbar, .asset-scroll *::-webkit-scrollbar { display: none; } }
