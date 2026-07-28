@@ -4,13 +4,17 @@ import { createLifeController } from './life.js';
 import { applyOutlineScale, applyToonSettings, configureMmdMaterials } from './materials.js';
 import { createMotionController, loadDefaultMotion, recomputeDuration } from './motion.js';
 import { enablePhysics, resetPhysics } from './physics.js';
-import { controls, frameObject, loader, scene, stage, transform } from './scene.js';
+import { camera, controls, frameObject, loader, renderer, scene, setTextureContext, stage, transform } from './scene.js';
 import { state } from './state.js';
 import type { SceneModel } from './types.js';
+import { parseMmdModelInWorker, prewarmModelWorker } from './worker-client.js';
 
 export type ActiveModelListener = (model: SceneModel | null) => void;
 const activeListeners = new Set<ActiveModelListener>();
 const modelsListeners = new Set<() => void>();
+const WORKER_PARSE_THRESHOLD = 256 * 1024;
+
+prewarmModelWorker();
 
 export function onActiveModelChange(listener: ActiveModelListener): () => void {
   activeListeners.add(listener);
@@ -75,57 +79,148 @@ export function arrangeModels(): void {
   emitChanges();
 }
 
-export function loadModel(file: File): Promise<SceneModel | null> {
-  return new Promise((resolve) => {
-    setNotice('LOADING MODEL…');
+function loadMeter(label: string, progress: number, visible = true): void {
+  const meter = document.querySelector<HTMLElement>('#load-meter');
+  const bar = document.querySelector<HTMLElement>('#load-progress');
+  const text = document.querySelector<HTMLElement>('#load-label');
+  document.body.classList.toggle('model-loading', visible);
+  if (!meter || !bar || !text) return;
+  meter.hidden = !visible;
+  bar.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  text.textContent = label;
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function scheduleIdle(work: () => void): void {
+  if ('requestIdleCallback' in window) window.requestIdleCallback(work, { timeout: 1800 });
+  else globalThis.setTimeout(work, 80);
+}
+
+function loadWithMmdLoader(file: File): Promise<any> {
+  return new Promise((resolve, reject) => {
     const url = objectUrl(file);
-    loader.load(url, async (mesh: any) => {
+    loader.load(url, (mesh: any) => {
       revokeObjectUrl(url);
-      mesh.name = file.name;
-      mesh.frustumCulled = false;
-      mesh.castShadow = true;
-      mesh.receiveShadow = false;
-      mesh.traverse((node: any) => {
-        if (!node.isMesh) return;
-        node.frustumCulled = false;
-        node.castShadow = true;
-        node.receiveShadow = false;
-      });
-      configureMmdMaterials(mesh);
-      const motion = createMotionController(mesh);
-      const item: SceneModel = {
-        id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
-        mesh,
-        file,
-        name: file.name,
-        visible: true,
-        physics: null,
-        motion,
-        life: createLifeController(mesh, motion),
-      };
-      const index = state.models.length;
-      mesh.position.x = index * 2.7;
-      stage.add(mesh);
-      state.models.push(item);
-      const defaultLoaded = await loadDefaultMotion(item);
-      recomputeDuration();
-      applyOutlineScale();
-      applyToonSettings();
-      if (state.physics) await enablePhysics(item);
-      setActiveModel(item);
-      if (state.models.length > 1) arrangeModels();
-      frameObject(mesh);
-      setNotice();
-      toast(defaultLoaded ? `${file.name} — 待機・素立ち VMD` : `${file.name} — モーションなし`);
-      resolve(item);
-    }, undefined, (error: unknown) => {
+      resolve(mesh);
+    }, (event: ProgressEvent) => {
+      const ratio = event.lengthComputable && event.total ? event.loaded / event.total : 0.24;
+      loadMeter('モデルデータを読み込み中', 0.08 + ratio * 0.34);
+    }, (error: unknown) => {
       revokeObjectUrl(url);
-      console.error(error);
-      setNotice();
-      toast(`${file.name} を読めませんでした。コンソールを確認してください`);
-      resolve(null);
+      reject(error);
     });
   });
+}
+
+function buildParsedModel(parsed: { data: any }): any {
+  const builder = loader.meshBuilder?.setCrossOrigin?.(loader.crossOrigin);
+  if (!builder?.build) throw new Error('MMDLoader mesh builder is unavailable.');
+  return builder.build(parsed.data, loader.resourcePath || 'mmd/', undefined, (error: unknown) => {
+    console.warn('MMD texture resource warning.', error);
+  });
+}
+
+async function parseAndBuildModel(file: File): Promise<any> {
+  if (file.size >= WORKER_PARSE_THRESHOLD) {
+    loadMeter('WorkerでPMXを解析中', 0.16);
+    const parsed = await parseMmdModelInWorker(file);
+    if (parsed) {
+      try {
+        loadMeter('メッシュを構築中', 0.48);
+        return buildParsedModel(parsed);
+      } catch (error) {
+        console.warn('Worker-parsed model could not be built; retrying with MMDLoader.', error);
+      }
+    }
+  }
+  loadMeter('MMDLoaderで解析中', 0.12);
+  return loadWithMmdLoader(file);
+}
+
+function configureModelMesh(mesh: any, file: File): void {
+  mesh.name = file.name;
+  mesh.frustumCulled = false;
+  mesh.receiveShadow = false;
+  mesh.traverse((node: any) => {
+    if (!node.isMesh) return;
+    node.frustumCulled = false;
+    node.receiveShadow = false;
+    const materials = node.material ? (Array.isArray(node.material) ? node.material : [node.material]) : [];
+    node.castShadow = materials.every((material: any) => !material.transparent || Number(material.opacity ?? 1) >= 0.98);
+  });
+  configureMmdMaterials(mesh);
+}
+
+export async function loadModel(file: File): Promise<SceneModel | null> {
+  const startedAt = performance.now();
+  setNotice(`LOADING ${file.name}…`);
+  loadMeter('モデルを準備中', 0.04);
+  try {
+    setTextureContext(file);
+    let mesh: any;
+    try {
+      mesh = await parseAndBuildModel(file);
+    } finally {
+      setTextureContext(null);
+    }
+    loadMeter('材質とボーンを準備中', 0.62);
+    configureModelMesh(mesh, file);
+    const motion = createMotionController(mesh);
+    const item: SceneModel = {
+      id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+      mesh,
+      file,
+      name: file.name,
+      visible: true,
+      physics: null,
+      motion,
+      life: createLifeController(mesh, motion),
+    };
+
+    const index = state.models.length;
+    mesh.position.x = index * 2.7;
+    stage.add(mesh);
+    state.models.push(item);
+    frameObject(mesh);
+    loadMeter('モデルを表示中', 0.76);
+
+    // Let the browser paint the model before expression panels, motion, shader compilation,
+    // and Ammo initialization do more work.
+    await nextPaint();
+    setActiveModel(item);
+    if (state.models.length > 1) arrangeModels();
+
+    loadMeter('待機モーションを適用中', 0.84);
+    const defaultLoaded = await loadDefaultMotion(item);
+    recomputeDuration();
+    applyOutlineScale();
+    applyToonSettings();
+
+    scheduleIdle(() => {
+      void renderer.compileAsync?.(scene, camera).catch?.((error: unknown) => console.debug('Shader precompile skipped.', error));
+      if (state.physics && state.models.includes(item)) {
+        void enablePhysics(item).catch((error: unknown) => console.warn(`${item.name}: physics initialization failed.`, error));
+      }
+    });
+
+    const elapsed = Math.round(performance.now() - startedAt);
+    loadMeter(`完了 ${elapsed} ms`, 1);
+    window.setTimeout(() => loadMeter('', 1, false), 650);
+    setNotice();
+    toast(defaultLoaded
+      ? `${file.name} — ${elapsed} ms / 待機VMD適用`
+      : `${file.name} — ${elapsed} ms / モーションなし`);
+    return item;
+  } catch (error) {
+    console.error(error);
+    loadMeter('', 0, false);
+    setNotice();
+    toast(`${file.name} を読めませんでした。コンソールを確認してください`);
+    return null;
+  }
 }
 
 export function focusModel(item: SceneModel): void {

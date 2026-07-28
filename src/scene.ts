@@ -6,13 +6,20 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { $, objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
 import { state } from './state.js';
+import type { StoredAsset } from './types.js';
 
 const canvas = $('#scene') as HTMLCanvasElement;
 const desktopPixelRatio = (): number => Math.min(window.devicePixelRatio, 1.75) * state.renderScale;
+const isLightTheme = (): boolean => document.documentElement.dataset.theme === 'light';
+const palette = () => isLightTheme()
+  ? { background: 0xf1f3f6, floor: 0xe6e9ee, grid: 0x758091 }
+  : { background: 0x0b0e14, floor: 0x171b24, grid: 0x687284 };
+
+THREE.Cache.enabled = true;
 
 export const clock = new THREE.Clock();
 export const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf1ece5);
+scene.background = new THREE.Color(palette().background);
 
 export const stage = new THREE.Group();
 stage.name = 'MMD_STAGE';
@@ -43,6 +50,7 @@ export const effect = new OutlineEffect(renderer, {
   defaultAlpha: 0.78,
   defaultKeepAlive: true,
 });
+effect.setSize(innerWidth, innerHeight);
 
 export const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 4, 0);
@@ -118,48 +126,137 @@ scene.add(rim);
 
 export const floor = new THREE.Mesh(
   new THREE.CircleGeometry(20, 64),
-  new THREE.MeshStandardMaterial({ color: 0xe9e1d8, roughness: 0.88, metalness: 0 }),
+  new THREE.MeshStandardMaterial({ color: palette().floor, roughness: 0.88, metalness: 0 }),
 );
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 floor.material.userData.outlineParameters = { visible: false };
 stage.add(floor);
 
-export const grid = new THREE.GridHelper(32, 32, 0xc8b9ad, 0xd9cec4);
+export const grid = new THREE.GridHelper(32, 32, palette().grid, palette().grid);
 grid.position.y = 0.012;
 grid.material.userData.outlineParameters = { visible: false };
+grid.material.depthWrite = false;
+grid.material.transparent = true;
+grid.material.opacity = isLightTheme() ? 0.42 : 0.34;
 stage.add(grid);
 
+function applySceneTheme(): void {
+  const next = palette();
+  floor.material.color.setHex(next.floor);
+  grid.material.color?.setHex?.(next.grid);
+  grid.material.opacity = isLightTheme() ? 0.42 : 0.34;
+  const showHdr = document.querySelector<HTMLInputElement>('#show-hdri')?.checked && state.environment;
+  scene.background = showHdr ? state.environment : new THREE.Color(next.background);
+}
+window.addEventListener('mmdlab-theme-change', applySceneTheme);
+
+function normalizedTexturePath(value: string): string {
+  let decoded = value;
+  try { decoded = decodeURIComponent(value); } catch { /* malformed legacy paths stay usable */ }
+  decoded = decoded.replace(/\\/g, '/').replace(/[?#].*$/, '');
+  const mmdIndex = decoded.toLowerCase().lastIndexOf('/mmd/');
+  if (mmdIndex >= 0) decoded = decoded.slice(mmdIndex + 5);
+  decoded = decoded.replace(/^mmd\//i, '').replace(/^\.\//, '').replace(/^\//, '');
+  return decoded.toLowerCase();
+}
+
 const textureManager = new THREE.LoadingManager();
+let indexedAssets: StoredAsset[] | null = null;
+const textureIndex = new Map<string, StoredAsset>();
+const textureUrls = new Map<string, string>();
+let preferredTextureRoot = '';
+
+function indexTexture(asset: StoredAsset): void {
+  const path = normalizedTexturePath(asset.path || asset.name);
+  if (!path) return;
+  const segments = path.split('/');
+  for (let index = 0; index < segments.length; index += 1) {
+    const suffix = segments.slice(index).join('/');
+    if (!textureIndex.has(suffix)) textureIndex.set(suffix, asset);
+  }
+  const name = normalizedTexturePath(asset.name);
+  if (name && !textureIndex.has(name)) textureIndex.set(name, asset);
+}
+
+function refreshTextureIndex(): void {
+  if (indexedAssets === state.assets) return;
+  indexedAssets = state.assets;
+  textureIndex.clear();
+  const activeIds = new Set<string>();
+  state.assets.forEach((asset) => {
+    if (asset.kind !== 'texture') return;
+    activeIds.add(asset.id);
+    indexTexture(asset);
+  });
+  for (const [id, url] of textureUrls) {
+    if (activeIds.has(id)) continue;
+    URL.revokeObjectURL(url);
+    textureUrls.delete(id);
+  }
+}
+
+export function setTextureContext(file: Pick<File, 'name' | 'webkitRelativePath'> | null): void {
+  const path = file?.webkitRelativePath?.replace(/\\/g, '/') ?? '';
+  preferredTextureRoot = path.includes('/') ? normalizedTexturePath(path.slice(0, path.lastIndexOf('/'))) : '';
+}
+
+function stableTextureUrl(asset: StoredAsset): string {
+  let url = textureUrls.get(asset.id);
+  if (!url) {
+    url = objectUrl(asset.file);
+    textureUrls.set(asset.id, url);
+  }
+  return url;
+}
+
 textureManager.setURLModifier((request: string) => {
-  const clean = decodeURIComponent(request).replace(/\\/g, '/').replace(/^.*mmd\//, '');
-  const asset = state.assets.find((item) =>
-    item.kind === 'texture' &&
-    (item.path.endsWith(clean) || clean.endsWith(item.path) || item.name === clean.split('/').pop()),
-  );
-  return asset ? objectUrl(asset.file) : request;
+  if (/^(?:data|blob):/i.test(request)) return request;
+  refreshTextureIndex();
+  const clean = normalizedTexturePath(request);
+  const preferred = preferredTextureRoot ? `${preferredTextureRoot}/${clean}` : '';
+  const asset = (preferred ? textureIndex.get(preferred) : undefined)
+    ?? textureIndex.get(clean)
+    ?? textureIndex.get(clean.split('/').pop() ?? clean);
+  return asset ? stableTextureUrl(asset) : request;
 });
+window.addEventListener('beforeunload', () => textureUrls.forEach((url) => URL.revokeObjectURL(url)));
 
 export const loader = new MMDLoader(textureManager);
 loader.setResourcePath('mmd/');
 export const pmrem = new THREE.PMREMGenerator(renderer);
-pmrem.compileEquirectangularShader();
+let pmremCompiled = false;
+function preparePmrem(): void {
+  if (pmremCompiled) return;
+  pmremCompiled = true;
+  pmrem.compileEquirectangularShader();
+}
 
-export const ammoReady: Promise<any | null> = new Promise((resolve) => {
+let resolveAmmo: (ammo: any | null) => void = () => undefined;
+let ammoStarted = false;
+export const ammoReady: Promise<any | null> = new Promise((resolve) => { resolveAmmo = resolve; });
+function startAmmo(): void {
+  if (ammoStarted) return;
+  ammoStarted = true;
   const script = document.createElement('script');
   script.src = 'https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/libs/ammo.wasm.js';
   script.onload = async () => {
     try {
       const ammo = await window.Ammo?.();
       if (ammo) window.Ammo = ammo;
-      resolve(ammo ?? null);
+      resolveAmmo(ammo ?? null);
     } catch {
-      resolve(null);
+      resolveAmmo(null);
     }
   };
-  script.onerror = () => resolve(null);
+  script.onerror = () => resolveAmmo(null);
   document.head.append(script);
-});
+}
+const scheduleAmmo = () => {
+  if ('requestIdleCallback' in window) window.requestIdleCallback(startAmmo, { timeout: 3500 });
+  else globalThis.setTimeout(startAmmo, 1600);
+};
+scheduleAmmo();
 
 export function frameObject(object: any): void {
   const box = new THREE.Box3().setFromObject(object);
@@ -175,6 +272,7 @@ function applyEnvironmentLight(): void {
 }
 
 export function applyHdr(texture: any, label: string, notify = true): void {
+  preparePmrem();
   const environment = pmrem.fromEquirectangular(texture).texture;
   texture.dispose();
   state.environment?.dispose();
@@ -182,7 +280,7 @@ export function applyHdr(texture: any, label: string, notify = true): void {
   scene.environment = environment;
   scene.environmentIntensity = state.environmentStrength;
   applyEnvironmentLight();
-  scene.background = new THREE.Color(0xe9edf2);
+  scene.background = new THREE.Color(palette().background);
   const checkbox = document.querySelector<HTMLInputElement>('#show-hdri');
   if (checkbox) checkbox.checked = false;
   $('#hdri-name').textContent = label;
@@ -191,6 +289,7 @@ export function applyHdr(texture: any, label: string, notify = true): void {
 
 export function loadHdr(file: File): void {
   setNotice('LOADING HDRI…');
+  preparePmrem();
   const url = objectUrl(file);
   new RGBELoader().load(url, (texture: any) => {
     revokeObjectUrl(url);
@@ -219,6 +318,7 @@ export function resizeScene(): void {
   camera.updateProjectionMatrix();
   if (!state.xrPresenting) renderer.setPixelRatio(desktopPixelRatio());
   renderer.setSize(innerWidth, innerHeight);
+  effect.setSize(innerWidth, innerHeight);
 }
 
 export function renderScene(): void {
@@ -226,13 +326,25 @@ export function renderScene(): void {
   else renderer.render(scene, camera);
 }
 
+let defaultHdrScheduled = false;
 export function loadDefaultHdr(): void {
-  new RGBELoader().load(
-    'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/white_studio_05_1k.hdr',
-    (texture: any) => applyHdr(texture, 'Poly Haven — White Studio 05 (CC0)', false),
-    undefined,
-    () => { $('#hdri-name').textContent = '標準 HDRI を読み込めませんでした'; },
-  );
+  if (defaultHdrScheduled) return;
+  defaultHdrScheduled = true;
+  const start = () => {
+    if (document.body.classList.contains('model-loading')) {
+      window.setTimeout(start, 900);
+      return;
+    }
+    preparePmrem();
+    new RGBELoader().load(
+      'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/white_studio_05_1k.hdr',
+      (texture: any) => applyHdr(texture, 'Poly Haven — White Studio 05 (CC0)', false),
+      undefined,
+      () => { $('#hdri-name').textContent = '標準 HDRI を読み込めませんでした'; },
+    );
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 5000 });
+  else globalThis.setTimeout(start, 2400);
 }
 
 export { canvas };

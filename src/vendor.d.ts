@@ -13,5 +13,8 @@ declare module 'three/addons/webxr/VRButton.js' { export const VRButton: any; }
 declare module 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js' {
   export function unzipSync(data: Uint8Array): Record<string, Uint8Array>;
 }
+declare module 'https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/libs/mmdparser.module.js' {
+  export const MMDParser: any;
+}
 
 interface Window { Ammo?: any; }

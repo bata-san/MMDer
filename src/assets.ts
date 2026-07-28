@@ -1,8 +1,9 @@
-import { extension } from './dom.js';
+import { extension, setNotice, toast } from './dom.js';
 import { applyMotion } from './motion.js';
 import { loadModel } from './models.js';
-import { refreshStoredAssets, saveAsset } from './storage.js';
+import { createStoredAsset, mergeStoredAssets, saveAssets } from './storage.js';
 import type { AssetKind, StoredAsset } from './types.js';
+import { expandZipInWorker } from './worker-client.js';
 
 function mimeFor(name: string): string {
   const suffix = extension({ name } as File);
@@ -13,24 +14,40 @@ function mimeFor(name: string): string {
   } as Record<string, string>)[suffix] ?? '';
 }
 
-async function expandArchives(files: FileList | File[]): Promise<File[]> {
-  const expanded: File[] = [];
-  for (const file of [...files]) {
-    if (extension(file) !== 'zip') {
-      expanded.push(file);
-      continue;
-    }
-    const { unzipSync } = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js');
-    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-    for (const [path, data] of Object.entries(entries) as [string, Uint8Array][]) {
-      if (!data.length || path.endsWith('/')) continue;
-      const name = path.split('/').pop() ?? path;
-      const entry = new File([data as BlobPart], name, { type: mimeFor(name) });
-      Object.defineProperty(entry, 'webkitRelativePath', { value: path });
-      expanded.push(entry);
-    }
+function archiveEntry(path: string, buffer: ArrayBuffer, lastModified: number): File {
+  const name = path.split('/').pop() ?? path;
+  const entry = new File([buffer], name, { type: mimeFor(name), lastModified });
+  Object.defineProperty(entry, 'webkitRelativePath', { value: path });
+  return entry;
+}
+
+async function expandArchive(file: File): Promise<File[]> {
+  const workerEntries = await expandZipInWorker(file);
+  if (workerEntries) {
+    return workerEntries
+      .filter((entry) => entry.buffer.byteLength && !entry.path.endsWith('/'))
+      .map((entry) => archiveEntry(entry.path, entry.buffer, file.lastModified));
   }
-  return expanded;
+  const { unzipSync } = await import('https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js');
+  const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+  return Object.entries(entries as Record<string, Uint8Array>)
+    .filter(([path, data]) => data.length && !path.endsWith('/'))
+    .map(([path, data]) => archiveEntry(path, data.slice().buffer, file.lastModified));
+}
+
+async function expandArchives(files: FileList | File[]): Promise<File[]> {
+  const source = [...files];
+  const expandedByIndex: File[][] = new Array(source.length);
+  let cursor = 0;
+  const consume = async (): Promise<void> => {
+    while (cursor < source.length) {
+      const index = cursor++;
+      const file = source[index];
+      expandedByIndex[index] = extension(file) === 'zip' ? await expandArchive(file) : [file];
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, source.length) }, consume));
+  return expandedByIndex.flat();
 }
 
 function kindFor(file: File): AssetKind | null {
@@ -41,17 +58,49 @@ function kindFor(file: File): AssetKind | null {
   return null;
 }
 
+async function yieldMainThread(): Promise<void> {
+  const schedulerApi = (globalThis as any).scheduler;
+  if (schedulerApi?.yield) {
+    await schedulerApi.yield();
+    return;
+  }
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 export async function importAssets(files: FileList | File[], loadImmediately = false): Promise<StoredAsset[]> {
-  const saved: StoredAsset[] = [];
-  for (const file of await expandArchives(files)) {
+  const startedAt = performance.now();
+  setNotice('PREPARING ASSETS…');
+  const expanded = await expandArchives(files);
+  const staged = expanded.flatMap((file) => {
     const kind = kindFor(file);
-    if (!kind) continue;
-    saved.push(await saveAsset(file, kind, file.webkitRelativePath || ''));
-  }
-  await refreshStoredAssets();
+    return kind ? [createStoredAsset(file, kind, file.webkitRelativePath || '')] : [];
+  });
+
+  // Make textures available to LoadingManager immediately. Persistent cloning of large files
+  // is deliberately postponed until after the first model is visible.
+  mergeStoredAssets(staged);
+
   if (loadImmediately) {
-    for (const asset of saved.filter((item) => item.kind === 'model')) await loadModel(asset.file);
-    for (const asset of saved.filter((item) => item.kind === 'motion')) await applyMotion(asset.file);
+    for (const asset of staged.filter((item) => item.kind === 'model')) {
+      await yieldMainThread();
+      await loadModel(asset.file);
+    }
+    for (const asset of staged.filter((item) => item.kind === 'motion')) {
+      await yieldMainThread();
+      await applyMotion(asset.file);
+    }
   }
-  return saved;
+
+  const persist = () => {
+    void saveAssets(staged).catch((error) => {
+      console.warn('Asset persistence failed.', error);
+      toast('一部のファイルを保存できませんでした');
+    });
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(persist, { timeout: 6000 });
+  else globalThis.setTimeout(persist, loadImmediately ? 500 : 80);
+
+  setNotice();
+  console.info(`Prepared ${staged.length} MMD assets in ${Math.round(performance.now() - startedAt)} ms.`);
+  return staged;
 }

@@ -21,8 +21,8 @@ function dbCall<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => ID
   }));
 }
 
-export async function saveAsset(file: File, kind: AssetKind, path = ''): Promise<StoredAsset> {
-  const asset: StoredAsset = {
+export function createStoredAsset(file: File, kind: AssetKind, path = ''): StoredAsset {
+  return {
     id: `${kind}:${file.name}:${file.size}:${file.lastModified}:${path}`,
     kind,
     name: file.name,
@@ -30,7 +30,33 @@ export async function saveAsset(file: File, kind: AssetKind, path = ''): Promise
     file,
     savedAt: Date.now(),
   };
-  await dbCall('readwrite', (store) => store.put(asset));
+}
+
+export function mergeStoredAssets(assets: StoredAsset[]): void {
+  if (!assets.length) return;
+  const merged = new Map(state.assets.map((asset) => [asset.id, asset]));
+  assets.forEach((asset) => merged.set(asset.id, asset));
+  state.assets = [...merged.values()];
+}
+
+export async function saveAssets(assets: StoredAsset[]): Promise<StoredAsset[]> {
+  if (!assets.length) return assets;
+  const db = await database;
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction('assets', 'readwrite');
+    const store = transaction.objectStore('assets');
+    assets.forEach((asset) => store.put(asset));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error ?? new Error('Asset storage transaction was aborted.'));
+  });
+  return assets;
+}
+
+export async function saveAsset(file: File, kind: AssetKind, path = ''): Promise<StoredAsset> {
+  const asset = createStoredAsset(file, kind, path);
+  mergeStoredAssets([asset]);
+  await saveAssets([asset]);
   return asset;
 }
 
