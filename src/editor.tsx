@@ -35,8 +35,8 @@ export function Editor() {
   useEffect(() => { const id = window.setInterval(() => redraw((n) => n + 1), 500); return () => clearInterval(id); }, []);
   const load = (files: FileList | null, models: boolean) => { if (files?.length) void importAssets(files, models); };
   const libraryModels = state.assets.filter((asset) => asset.kind === 'model');
-  const grid = `56px ${leftOpen ? '240px' : '0px'} minmax(0,1fr) ${rightOpen ? '340px' : '0px'}`;
-  return <main className="grid h-screen grid-rows-[48px_minmax(0,1fr)] bg-background text-foreground" style={{ gridTemplateColumns: grid }}>
+  const layoutColumns = `56px ${leftOpen ? '240px' : '0px'} minmax(0,1fr) ${rightOpen ? '340px' : '0px'}`;
+  return <main className="grid h-screen grid-rows-[48px_minmax(0,1fr)] bg-background text-foreground" style={{ gridTemplateColumns: layoutColumns }}>
     <FileInput inputRef={folder} folder onFiles={(files) => load(files, false)} />
     <FileInput inputRef={motion} accept=".vmd,.vpd" onFiles={(files) => load(files, false)} />
     <header className="col-span-4 flex items-center gap-3 border-b px-3"><span className="size-3 rounded-sm bg-foreground" /><span className="text-sm font-medium">無題のシーン</span><span className="text-xs text-muted-foreground">{state.models.length} モデル</span><span className="rounded border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{BUILD_VERSION}</span><div className="ml-auto flex gap-1"><Button size="icon" variant="ghost" onClick={() => setLeftOpen(!leftOpen)}>{leftOpen ? <PanelLeftClose /> : <PanelLeftOpen />}</Button><Button size="icon" variant="ghost" onClick={() => setRightOpen(!rightOpen)}>{rightOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><Button size="sm" variant="ghost" onClick={() => setDark(!dark)}>{dark ? 'ライト' : 'ダーク'}</Button><Button size="sm" variant="outline" onClick={() => folder.current?.click()}><FolderOpen />フォルダを追加</Button><Button size="sm" onClick={() => motion.current?.click()}>モーション追加</Button></div></header>
