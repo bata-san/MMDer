@@ -8,6 +8,7 @@ import type {
   BoneOffsetBinding,
   LifeController,
   MotionController,
+  PositionOffsetBinding,
 } from './types.js';
 
 let pointerX = 0;
@@ -77,6 +78,10 @@ function findBone(mesh: any, patterns: RegExp[]): any | null {
 
 function boneBinding(bone: any | null): BoneOffsetBinding | null {
   return bone ? { bone, name: bone.name, lastOffset: new THREE.Quaternion() } : null;
+}
+
+function positionBinding(bone: any | null): PositionOffsetBinding | null {
+  return bone ? { bone, name: bone.name, lastOffset: new THREE.Vector3() } : null;
 }
 
 function collectEyeBindings(mesh: any): BoneOffsetBinding[] {
@@ -172,6 +177,12 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     anchorVelocity: new THREE.Vector3(),
     posturePitch: 0,
     postureRoll: 0,
+    centerPosition: positionBinding(body.center?.bone ?? body.hips?.bone) ?? undefined,
+    leftFoot: positionBinding(findBone(mesh, [/^左足ＩＫ$/i, /^(left.?foot.?ik|foot[_ .-]?ik[_ .-]?l)$/i])) ?? undefined,
+    rightFoot: positionBinding(findBone(mesh, [/^右足ＩＫ$/i, /^(right.?foot.?ik|foot[_ .-]?ik[_ .-]?r)$/i])) ?? undefined,
+    nextFootStepAt: 3 + Math.random() * 4,
+    footStepStartedAt: -Infinity,
+    footStepSide: null,
   };
 }
 
@@ -307,9 +318,19 @@ function applyBoneOffset(binding: BoneOffsetBinding | undefined | null, offset: 
   binding.lastOffset.copy(offset);
 }
 
+function applyPositionOffset(binding: PositionOffsetBinding | undefined | null, offset: any, motion: MotionController): void {
+  if (!binding) return;
+  if (!motionControlsBone(motion, binding.name)) binding.bone.position.sub(binding.lastOffset);
+  binding.bone.position.add(offset);
+  binding.lastOffset.copy(offset);
+}
+
 function clearBoneOffsets(life: LifeController, motion: MotionController): void {
   life.eyes.forEach((binding) => applyBoneOffset(binding, IDENTITY, motion));
   BODY_REGIONS.forEach((region) => applyBoneOffset(life.body[region], IDENTITY, motion));
+  applyPositionOffset(life.centerPosition, new THREE.Vector3(), motion);
+  applyPositionOffset(life.leftFoot, new THREE.Vector3(), motion);
+  applyPositionOffset(life.rightFoot, new THREE.Vector3(), motion);
 }
 
 function regionOffset(life: LifeController, region: BodyRegion, delta: number): any {
@@ -356,6 +377,40 @@ function updatePostureInertia(life: LifeController, delta: number): void {
   const follow = 1 - Math.exp(-delta * THREE.MathUtils.lerp(3, 14, settings.postureRecovery));
   life.posturePitch += (targetPitch - life.posturePitch) * follow;
   life.postureRoll += (targetRoll - life.postureRoll) * follow;
+}
+
+function updateFootPlacement(life: LifeController, motion: MotionController): void {
+  const settings = state.lifeSettings;
+  const zero = new THREE.Vector3();
+  const moving = life.anchorVelocity.length() > 0.42;
+  if (!settings.footReplant || moving) {
+    life.footStepSide = null;
+    life.nextFootStepAt = Math.max(life.nextFootStepAt, life.lifeTime + 1.6);
+    applyPositionOffset(life.centerPosition, zero, motion);
+    applyPositionOffset(life.leftFoot, zero, motion);
+    applyPositionOffset(life.rightFoot, zero, motion);
+    return;
+  }
+
+  if (!life.footStepSide && life.lifeTime >= life.nextFootStepAt) {
+    life.footStepSide = Math.random() < 0.5 ? 'left' : 'right';
+    life.footStepStartedAt = life.lifeTime;
+  }
+  const cycle = life.footStepSide ? (life.lifeTime - life.footStepStartedAt) / 0.72 : 0;
+  const progress = THREE.MathUtils.clamp(cycle, 0, 1);
+  const lift = Math.sin(Math.PI * progress) * 0.055 * settings.footReplant;
+  const travel = Math.sin(Math.PI * progress) * 0.035 * settings.footReplant;
+  const side = life.footStepSide === 'left' ? -1 : 1;
+  const supportShift = life.footStepSide ? -side * Math.sin(Math.PI * progress) * 0.045 * settings.weightShift : 0;
+  const footOffset = new THREE.Vector3(side * travel * 0.35, lift, travel);
+  applyPositionOffset(life.centerPosition, new THREE.Vector3(supportShift, 0, 0), motion);
+  applyPositionOffset(life.leftFoot, life.footStepSide === 'left' ? footOffset : zero, motion);
+  applyPositionOffset(life.rightFoot, life.footStepSide === 'right' ? footOffset : zero, motion);
+
+  if (progress >= 1) {
+    life.footStepSide = null;
+    life.nextFootStepAt = life.lifeTime + THREE.MathUtils.lerp(3.5, 8.5, Math.random());
+  }
 }
 
 export function updateLife(
@@ -416,6 +471,7 @@ export function updateLife(
     }
     applyBoneOffset(life.body[region], offset, motion);
   });
+  updateFootPlacement(life, motion);
 }
 
 export function forceBlink(life: LifeController, motion: MotionController, kind: BlinkKind = 'full'): void {

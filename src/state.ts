@@ -86,6 +86,8 @@ export const state: AppState = {
     swayIrregularity: 0.5,
     inertiaResponse: 0.68,
     postureRecovery: 0.5,
+    weightShift: 0.46,
+    footReplant: 0.42,
     segments,
   },
   interactionSettings: {

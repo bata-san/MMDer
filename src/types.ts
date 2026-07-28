@@ -57,6 +57,12 @@ export interface BoneOffsetBinding {
   lastOffset: any;
 }
 
+export interface PositionOffsetBinding {
+  bone: any;
+  name: string;
+  lastOffset: any;
+}
+
 export interface LifeController {
   mesh: any;
   phase: number;
@@ -90,6 +96,12 @@ export interface LifeController {
   anchorVelocity: any;
   posturePitch: number;
   postureRoll: number;
+  centerPosition?: PositionOffsetBinding;
+  leftFoot?: PositionOffsetBinding;
+  rightFoot?: PositionOffsetBinding;
+  nextFootStepAt: number;
+  footStepStartedAt: number;
+  footStepSide: 'left' | 'right' | null;
 }
 
 export interface PhysicsRuntime {
@@ -158,6 +170,8 @@ export interface LifeSettings {
   swayIrregularity: number;
   inertiaResponse: number;
   postureRecovery: number;
+  weightShift: number;
+  footReplant: number;
   segments: Record<BodyRegion, number>;
 }
 

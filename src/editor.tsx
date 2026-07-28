@@ -793,6 +793,8 @@ export function Editor() {
                     "swayIrregularity",
                     "inertiaResponse",
                     "postureRecovery",
+                    "weightShift",
+                    "footReplant",
                   ] as const
                 ).map((key) => (
                   <Control
