@@ -5,16 +5,19 @@ const BUILD_VERSION = 'v5.1.0';
 function cloudflareShell(): Plugin {
   return {
     name: 'mmd-lab-cloudflare-shell',
-    enforce: 'pre',
-    transformIndexHtml(html) {
-      let next = html
-        .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
-        .replace(/<script type="module" src="\.\/dist\/app\.js\?v=[^"]+"><\/script>/, '<script type="module" src="/src/client.ts"></script>')
-        .replace(/<span id="build-version">[^<]*<\/span>/, `<span id="build-version">${BUILD_VERSION}</span>`);
-      if (!next.includes('rel="icon"')) {
-        next = next.replace('</head>', '  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />\n</head>');
-      }
-      return next;
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        let next = html
+          .replace(/\s*<link rel="stylesheet" href="\.\/style\.css[^"]*" \/>/, '')
+          .replace(/\s*<script type="importmap">[\s\S]*?<\/script>/, '')
+          .replace(/<script type="module" src="\.\/dist\/app\.js\?v=[^"]+"><\/script>/, '<script type="module" src="/src/client.ts"></script>')
+          .replace(/<span id="build-version">[^<]*<\/span>/, `<span id="build-version">${BUILD_VERSION}</span>`);
+        if (!next.includes('rel="icon"')) {
+          next = next.replace('</head>', '  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />\n</head>');
+        }
+        return next;
+      },
     },
   };
 }
