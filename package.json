@@ -1,15 +1,29 @@
 {
   "name": "mmd-lab-viewer",
   "private": true,
-  "version": "5.0.0",
+  "version": "5.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "dev": "npm run prepare:runtime && vite",
+    "build:client": "npm run prepare:runtime && vite build",
+    "build": "npm run build:client",
+    "typecheck:client": "npm run prepare:runtime && tsc -p tsconfig.json --noEmit",
+    "typecheck:worker": "tsc -p tsconfig.worker.json --noEmit",
+    "typecheck": "npm run typecheck:client && npm run typecheck:worker",
     "verify": "node scripts/verify.mjs",
-    "check": "npm run typecheck && npm run build && npm run verify"
+    "check": "npm run typecheck && npm run build && npm run verify",
+    "preview": "vite preview",
+    "cf:dev": "npm run build && wrangler dev",
+    "cf:types": "wrangler types",
+    "deploy": "npm run check && wrangler deploy"
+  },
+  "dependencies": {
+    "three": "0.166.1"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "wrangler": "^4.0.0"
   }
 }
