@@ -33,6 +33,16 @@ let pullHandle: PhysicsPullHandle | null = null;
 let pullTarget = new THREE.Vector3();
 let operation: 'none' | 'move' | 'pull' = 'none';
 
+async function ensurePhysics(item: SceneModel): Promise<boolean> {
+  // Direct manipulation must be useful even when the Physics tab was not opened first.
+  // A runtime may exist while the global simulation is paused, so enable both layers.
+  state.physics = true;
+  const physicsToggle = document.querySelector<HTMLInputElement>('#physics');
+  if (physicsToggle) physicsToggle.checked = true;
+  if (!item.physics?.enabled) await enablePhysics(item);
+  return Boolean(item.physics?.enabled);
+}
+
 const marker = new THREE.Mesh(
   new THREE.SphereGeometry(0.075, 16, 12),
   new THREE.MeshBasicMaterial({ color: 0x3d8df2, transparent: true, opacity: 0.72, depthTest: false }),
@@ -83,8 +93,7 @@ function selectPicked(model: SceneModel, event: PointerEvent): void {
 }
 
 async function pokePicked(hit: PickResult): Promise<void> {
-  if (!hit.model.physics) await enablePhysics(hit.model);
-  if (!hit.model.physics) return;
+  if (!await ensurePhysics(hit.model)) return;
   const cameraDirection = camera.getWorldDirection(new THREE.Vector3());
   const direction = hit.normal.clone().multiplyScalar(-0.35).add(cameraDirection).normalize();
   const affected = pokePhysics(
@@ -102,8 +111,7 @@ async function pokePicked(hit: PickResult): Promise<void> {
 }
 
 async function beginPull(hit: PickResult, event: PointerEvent): Promise<void> {
-  if (!hit.model.physics) await enablePhysics(hit.model);
-  if (!hit.model.physics) return;
+  if (!await ensurePhysics(hit.model)) return;
   pullHandle = beginPhysicsPull(hit.model, hit.point, state.interactionSettings.pullRadius);
   if (!pullHandle) return;
   dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), hit.point);
