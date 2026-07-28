@@ -4,11 +4,13 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { $, objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
+import { objectUrl, revokeObjectUrl, setNotice, toast } from './dom.js';
 import { state } from './state.js';
 import type { StoredAsset } from './types.js';
 
-const canvas = $('#scene') as HTMLCanvasElement;
+const sceneCanvas = document.querySelector<HTMLCanvasElement>('#scene');
+if (!sceneCanvas) throw new Error('Missing viewport canvas.');
+const canvas: HTMLCanvasElement = sceneCanvas;
 const desktopPixelRatio = (): number => Math.min(window.devicePixelRatio, 1.75) * state.renderScale;
 const isLightTheme = (): boolean => document.documentElement.dataset.theme === 'light';
 const palette = () => isLightTheme()
@@ -286,7 +288,6 @@ export function applyHdr(texture: any, label: string, notify = true): void {
   scene.background = new THREE.Color(palette().background);
   const checkbox = document.querySelector<HTMLInputElement>('#show-hdri');
   if (checkbox) checkbox.checked = false;
-  $('#hdri-name').textContent = label;
   if (notify) toast(`HDRI: ${label}`);
 }
 
@@ -343,7 +344,7 @@ export function loadDefaultHdr(): void {
       'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/white_studio_05_1k.hdr',
       (texture: any) => applyHdr(texture, 'Poly Haven — White Studio 05 (CC0)', false),
       undefined,
-      () => { $('#hdri-name').textContent = '標準 HDRI を読み込めませんでした'; },
+      () => { console.warn('Default HDRI could not be loaded.'); },
     );
   };
   if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 5000 });

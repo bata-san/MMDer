@@ -1,11 +1,9 @@
-import { $, input, output } from './dom.js';
 import { updateInteraction, setupInteraction } from './interaction.js';
 import { updateLife } from './life.js';
 import { recomputeDuration } from './motion.js';
 import { updateRigHandles } from './models.js';
 import { stepPhysics } from './physics.js';
-import { BUILD_VERSION, state } from './state.js';
-import { bindUi } from './ui.js';
+import { state } from './state.js';
 import { refreshStoredAssets } from './storage.js';
 import {
   clock,
@@ -16,10 +14,7 @@ import {
   resizeScene,
   setRenderScale,
 } from './scene.js';
-import { renderActivePanels, renderLibraries } from './views.js';
 import { setupXr } from './xr.js';
-
-$('#build-version').textContent = BUILD_VERSION;
 
 let frameCount = 0;
 let fpsStartedAt = performance.now();
@@ -34,18 +29,14 @@ function updateTimeline(): void {
     } else {
       state.elapsed = state.duration;
       state.playing = false;
-      $('#play').textContent = '▶';
     }
   }
-  input('#timeline').value = String(state.elapsed / state.duration);
-  output('#timecode').textContent = `${String(Math.floor(state.elapsed / 60)).padStart(2, '0')}:${(state.elapsed % 60).toFixed(1).padStart(4, '0')}`;
 }
 
 function updatePerformance(now: number): void {
   frameCount += 1;
   if (frameCount % 30 !== 0) return;
   const fps = Math.round(30000 / Math.max(1, now - fpsStartedAt));
-  $('#fps').textContent = `${fps} FPS`;
   fpsStartedAt = now;
   if (state.xrPresenting) return;
 
@@ -73,12 +64,9 @@ function animate(): void {
 }
 
 async function start(): Promise<void> {
-  bindUi();
   setupInteraction();
   setupXr();
   await refreshStoredAssets();
-  renderLibraries();
-  renderActivePanels();
   recomputeDuration();
   loadDefaultHdr();
   window.addEventListener('resize', resizeScene);

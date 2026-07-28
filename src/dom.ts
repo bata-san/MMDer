@@ -39,7 +39,8 @@ export function revokeObjectUrl(url: string): void {
 }
 
 export function toast(text: string): void {
-  const root = $('#toast');
+  const root = document.querySelector<HTMLElement>('#toast');
+  if (!root) { console.info(text); return; }
   root.textContent = text;
   root.classList.add('show');
   window.clearTimeout(Number(root.dataset.timer ?? 0));
@@ -48,5 +49,6 @@ export function toast(text: string): void {
 }
 
 export function setNotice(text = 'READY — LOCAL MODE'): void {
-  $('#notice').textContent = text;
+  const notice = document.querySelector<HTMLElement>('#notice');
+  if (notice) notice.textContent = text;
 }

@@ -1,18 +1,16 @@
 import './index.css';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { createElement } from 'react';
-import { mountWorkbench } from './workbench';
-
-const legacy = document.createElement('div');
-legacy.id = 'runtime-controls';
-legacy.hidden = true;
-document.body.append(legacy);
-mountWorkbench(legacy);
 
 const root = createRoot(document.querySelector('#app')!);
-void import('./editor').then(({ Editor }) => root.render(createElement(Editor)));
-
-void import('../runtime/app.js').then(() => {
+void (async () => {
+  const { Editor } = await import('./editor');
+  flushSync(() => root.render(createElement(Editor)));
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
-  document.querySelector('#viewport-canvas')?.append(canvas!);
-});
+  const viewport = document.querySelector('#viewport-canvas');
+  if (!canvas || !viewport) throw new Error('Editor viewport failed to mount.');
+  viewport.append(canvas);
+  await import('../runtime/app.js');
+  window.dispatchEvent(new Event('resize'));
+})();

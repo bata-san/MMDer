@@ -13,7 +13,8 @@ assert(!packageJson.scripts.build.includes('prepare:runtime'));
 
 const client = await text('src/client.ts');
 assert(client.includes("import('../runtime/app.js')"));
-assert(client.includes('mountWorkbench'));
+assert(!client.includes('mountWorkbench'));
+assert(client.includes("document.querySelector<HTMLCanvasElement>('#scene')"));
 assert(await exists('src/editor.tsx'));
 const runtime = await text('runtime/app.js');
 assert(runtime.includes("import '../src/app.ts'"));
@@ -32,4 +33,4 @@ const encodedVmd = (await text('assets/default-idle.vmd')).trim();
 assert(Buffer.from(encodedVmd, 'base64').byteLength > 1024);
 assert(!(await exists('dist/app-stable.js')));
 
-console.log('[verify] shadcn TypeScript editor shell and MMD runtime bridge: OK');
+console.log('[verify] direct shadcn TypeScript editor and MMD runtime: OK');
