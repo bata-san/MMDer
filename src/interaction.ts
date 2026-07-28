@@ -58,7 +58,7 @@ function setPointer(event: PointerEvent): void {
     -(event.clientY - rect.top) / rect.height * 2 + 1,
   );
   raycaster.setFromCamera(pointer, camera);
-  setLifePointer(event.clientX, event.clientY);
+  setLifePointer(event.clientX, event.clientY, rect);
 }
 
 function pick(event: PointerEvent): PickResult | null {
@@ -188,9 +188,8 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onPointerMove(event: PointerEvent): void {
-  setLifePointer(event.clientX, event.clientY);
-  if (operation === 'none') return;
   setPointer(event);
+  if (operation === 'none') return;
   if (operation === 'move') {
     const current = new THREE.Vector3();
     if (!dragPoint(current)) return;

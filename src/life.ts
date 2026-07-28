@@ -19,9 +19,13 @@ const BODY_REGIONS: BodyRegion[] = [
   'shoulderLeft', 'shoulderRight', 'neck', 'head',
 ];
 
-export function setLifePointer(clientX: number, clientY: number): void {
-  pointerX = Math.max(-1, Math.min(1, clientX / Math.max(1, innerWidth) * 2 - 1));
-  pointerY = Math.max(-1, Math.min(1, -(clientY / Math.max(1, innerHeight) * 2 - 1)));
+export function setLifePointer(clientX: number, clientY: number, viewport?: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>): void {
+  const left = viewport?.left ?? 0;
+  const top = viewport?.top ?? 0;
+  const width = viewport?.width ?? innerWidth;
+  const height = viewport?.height ?? innerHeight;
+  pointerX = Math.max(-1, Math.min(1, (clientX - left) / Math.max(1, width) * 2 - 1));
+  pointerY = Math.max(-1, Math.min(1, -((clientY - top) / Math.max(1, height) * 2 - 1)));
 }
 
 function normalRandom(): number {
@@ -252,7 +256,7 @@ function chooseGazeTarget(life: LifeController, motion: MotionController): void 
   life.gazeElapsed = 0;
   const amplitudeRadians = Math.hypot(life.gazeTargetYaw - life.gazeStartYaw, life.gazeTargetPitch - life.gazeStartPitch);
   const amplitudeDegrees = THREE.MathUtils.radToDeg(amplitudeRadians);
-  life.gazeDuration = Math.max(0.028, Math.min(0.115, 0.024 + amplitudeDegrees * 0.0028));
+  life.gazeDuration = Math.max(0.16, Math.min(0.52, 0.16 + amplitudeDegrees * 0.025));
   const activity = Math.max(0.05, settings.gazeActivity);
   const dwell = THREE.MathUtils.lerp(2.6, 0.65, settings.gazeDwell);
   life.nextGazeAt = life.lifeTime + dwell * (0.6 + Math.random() * 1.1) / (0.55 + activity * 0.65);
@@ -263,9 +267,9 @@ function updateGaze(life: LifeController, motion: MotionController, delta: numbe
   const settings = state.lifeSettings;
   if (settings.followPointer) {
     const range = settings.gazeRange;
-    life.gazeTargetYaw = -pointerX * 0.18 * range;
+    life.gazeTargetYaw = pointerX * 0.18 * range;
     life.gazeTargetPitch = pointerY * 0.1 * range;
-    const response = 1 - Math.exp(-delta * 15);
+    const response = 1 - Math.exp(-delta * 6);
     life.gazeYaw += (life.gazeTargetYaw - life.gazeYaw) * response;
     life.gazePitch += (life.gazeTargetPitch - life.gazePitch) * response;
   } else {
