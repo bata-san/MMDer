@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { importAssets } from "./assets";
-import { forceBlink } from "./life";
+import { forceBlink, forceFootReplant } from "./life";
 import {
   applyMotion,
   morphMeshes,
@@ -772,6 +772,21 @@ export function Editor() {
                   }
                 >
                   瞬きテスト
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const models = state.selectedModels.length
+                      ? state.selectedModels
+                      : state.active
+                        ? [state.active]
+                        : [];
+                    models.forEach((model) => forceFootReplant(model.life));
+                    redraw((n) => n + 1);
+                  }}
+                >
+                  ステップテスト
                 </Button>
                 {(
                   [

@@ -6,6 +6,7 @@ import type {
   BlinkKind,
   BodyRegion,
   BoneOffsetBinding,
+  LegIkChain,
   LifeController,
   MotionController,
   PositionOffsetBinding,
@@ -80,16 +81,63 @@ function boneBinding(bone: any | null): BoneOffsetBinding | null {
   return bone ? { bone, name: bone.name, lastOffset: new THREE.Quaternion() } : null;
 }
 
+function collectFacialMorphs(mesh: any): { mouth: LifeController['mouthTargets']; expression: LifeController['expressionTargets'] } {
+  const mouth: LifeController['mouthTargets'] = [];
+  const expression: LifeController['expressionTargets'] = [];
+  mesh.traverse((node: any) => {
+    if (!node.isMesh || !node.morphTargetDictionary || !node.morphTargetInfluences) return;
+    Object.entries(node.morphTargetDictionary as Record<string, number>).forEach(([name, indexValue]) => {
+      const normalized = normalizedMorphName(name);
+      const target = { node, name, index: Number(indexValue), lastProcedural: 0, baseValue: 0 };
+      if (/(あ|い|う|え|お|口|リップ|mouth|lip|vowel|open)/i.test(normalized) && !/(目|eye|blink)/i.test(normalized)) {
+        mouth.push(target);
+      } else if (/(笑|にこ|微笑|smile|happy|joy|grin)/i.test(normalized)) {
+        expression.push(target);
+      }
+    });
+  });
+  return { mouth: mouth.slice(0, 1), expression: expression.slice(0, 1) };
+}
+
 function positionBinding(bone: any | null): PositionOffsetBinding | null {
   return bone ? { bone, name: bone.name, lastOffset: new THREE.Vector3() } : null;
 }
 
+function createLegIkChain(mesh: any, side: 'left' | 'right'): LegIkChain | undefined {
+  const japanese = side === 'left' ? '左' : '右';
+  const english = side === 'left' ? 'left' : 'right';
+  const hip = findBone(mesh, [
+    new RegExp(`^${japanese}足$`, 'i'),
+    new RegExp(`^${english}[ ._-]?(thigh|upper.?leg|leg)$`, 'i'),
+    new RegExp(`(thigh|upper.?leg)[ ._-]?${english[0]}`, 'i'),
+  ]);
+  const knee = findBone(mesh, [
+    new RegExp(`^${japanese}(ひざ|膝)$`, 'i'),
+    new RegExp(`^${english}[ ._-]?knee$`, 'i'),
+    new RegExp(`knee[ ._-]?${english[0]}`, 'i'),
+  ]);
+  const ankle = findBone(mesh, [
+    new RegExp(`^${japanese}足首$`, 'i'),
+    new RegExp(`^${english}[ ._-]?(ankle|foot)$`, 'i'),
+    new RegExp(`(ankle|foot)[ ._-]?${english[0]}`, 'i'),
+  ]);
+  if (!hip || !knee || !ankle) return undefined;
+  return {
+    hip,
+    knee,
+    ankle,
+    floorHeight: ankle.getWorldPosition(new THREE.Vector3()).y,
+    lastHipOffset: new THREE.Quaternion(),
+    lastKneeOffset: new THREE.Quaternion(),
+  };
+}
+
 function collectEyeBindings(mesh: any): BoneOffsetBinding[] {
-  const both = findBone(mesh, [/^(両目|eyes|both.?eyes)$/i]);
+  const both = findBone(mesh, [/^(両目|eyes|both.?eyes)$/i, /両目|both.?eye/i]);
   if (both) return [boneBinding(both)!];
   return [
-    findBone(mesh, [/^(左目|left.?eye|eye[_ .-]?l)$/i]),
-    findBone(mesh, [/^(右目|right.?eye|eye[_ .-]?r)$/i]),
+    findBone(mesh, [/^(左目|left.?eye|eye[_ .-]?l)$/i, /左目|left.?eye|eye[_ .-]?l/i]),
+    findBone(mesh, [/^(右目|right.?eye|eye[_ .-]?r)$/i, /右目|right.?eye|eye[_ .-]?r/i]),
   ].filter(Boolean).map((bone) => boneBinding(bone)!);
 }
 
@@ -139,6 +187,7 @@ function createBreathAction(mesh: any, motion: MotionController): { clip: any | 
 
 export function createLifeController(mesh: any, motion: MotionController): LifeController {
   const breath = createBreathAction(mesh, motion);
+  const facial = collectFacialMorphs(mesh);
   const swayNoise: LifeController['swayNoise'] = {};
   const body = collectBodyBindings(mesh);
   const anchor = body.hips?.bone ?? body.center?.bone ?? body.spineLower?.bone ?? mesh;
@@ -148,6 +197,12 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     mesh,
     phase: Math.random() * Math.PI * 2,
     blinkTargets: collectBlinkTargets(mesh),
+    mouthTargets: facial.mouth,
+    expressionTargets: facial.expression,
+    jaw: boneBinding(findBone(mesh, [/^顎$/i, /^jaw$/i, /^mouth$/i])) ?? undefined,
+    mouthValue: 0,
+    expressionValue: 0,
+    nextExpressionAt: 2 + Math.random() * 4,
     nextBlinkAt: 1.5 + Math.random() * 3,
     lifeTime: 0,
     blinkStartedAt: 0,
@@ -180,6 +235,8 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     centerPosition: positionBinding(body.center?.bone ?? body.hips?.bone) ?? undefined,
     leftFoot: positionBinding(findBone(mesh, [/^左足ＩＫ$/i, /^(left.?foot.?ik|foot[_ .-]?ik[_ .-]?l)$/i])) ?? undefined,
     rightFoot: positionBinding(findBone(mesh, [/^右足ＩＫ$/i, /^(right.?foot.?ik|foot[_ .-]?ik[_ .-]?r)$/i])) ?? undefined,
+    leftLegIk: createLegIkChain(mesh, 'left'),
+    rightLegIk: createLegIkChain(mesh, 'right'),
     nextFootStepAt: 3 + Math.random() * 4,
     footStepStartedAt: -Infinity,
     footStepSide: null,
@@ -318,6 +375,42 @@ function applyBoneOffset(binding: BoneOffsetBinding | undefined | null, offset: 
   binding.lastOffset.copy(offset);
 }
 
+function applyFacialMorphs(
+  targets: LifeController['mouthTargets'],
+  motion: MotionController,
+  value: number,
+  poseAdvanced: boolean,
+): void {
+  targets.forEach((target) => {
+    const influences = target.node.morphTargetInfluences as number[] | undefined;
+    if (!influences || target.index < 0 || target.index >= influences.length) return;
+    const current = Number(influences[target.index]) || 0;
+    const mixerOwnsMorph = poseAdvanced && motionControlsMorph(motion, target.name, target.index);
+    const base = THREE.MathUtils.clamp(mixerOwnsMorph ? current : current - target.lastProcedural, 0, 1);
+    const contribution = (1 - base) * THREE.MathUtils.clamp(value, 0, 1);
+    influences[target.index] = THREE.MathUtils.clamp(base + contribution, 0, 1);
+    target.baseValue = base;
+    target.lastProcedural = contribution;
+  });
+}
+
+function updateFace(life: LifeController, motion: MotionController, delta: number, poseAdvanced: boolean): void {
+  const breathPhase = Math.max(0, Math.sin(life.lifeTime * state.lifeSettings.breathRate / 60 * Math.PI * 2 + life.phase));
+  const mouthTarget = 0.018 + breathPhase * 0.045;
+  life.mouthValue += (mouthTarget - life.mouthValue) * (1 - Math.exp(-delta * 4));
+  if (life.lifeTime >= life.nextExpressionAt) {
+    life.expressionValue = 0.045 + Math.random() * 0.09;
+    life.nextExpressionAt = life.lifeTime + 2.8 + Math.random() * 6;
+  }
+  life.expressionValue *= Math.exp(-delta * 0.38);
+  applyFacialMorphs(life.mouthTargets, motion, life.mouthValue, poseAdvanced);
+  applyFacialMorphs(life.expressionTargets, motion, life.expressionValue, poseAdvanced);
+  if (life.jaw) {
+    const jawOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(life.mouthValue * 0.055, 0, 0));
+    applyBoneOffset(life.jaw, jawOffset, motion);
+  }
+}
+
 function applyPositionOffset(binding: PositionOffsetBinding | undefined | null, offset: any, motion: MotionController): void {
   if (!binding) return;
   if (!motionControlsBone(motion, binding.name)) binding.bone.position.sub(binding.lastOffset);
@@ -325,12 +418,57 @@ function applyPositionOffset(binding: PositionOffsetBinding | undefined | null, 
   binding.lastOffset.copy(offset);
 }
 
+function clearLegIk(chain: LegIkChain | undefined, motion: MotionController): void {
+  if (!chain) return;
+  if (!motionControlsBone(motion, chain.hip.name)) {
+    chain.hip.quaternion.multiply(chain.lastHipOffset.clone().invert()).normalize();
+  }
+  if (!motionControlsBone(motion, chain.knee.name)) {
+    chain.knee.quaternion.multiply(chain.lastKneeOffset.clone().invert()).normalize();
+  }
+  chain.lastHipOffset.identity();
+  chain.lastKneeOffset.identity();
+}
+
+function rotateBoneToward(bone: any, end: any, target: any): void {
+  bone.updateWorldMatrix(true, false);
+  end.updateWorldMatrix(true, false);
+  const origin = bone.getWorldPosition(new THREE.Vector3());
+  const current = end.getWorldPosition(new THREE.Vector3()).sub(origin);
+  const desired = target.clone().sub(origin);
+  if (current.lengthSq() < 1e-8 || desired.lengthSq() < 1e-8) return;
+  const worldDelta = new THREE.Quaternion().setFromUnitVectors(current.normalize(), desired.normalize());
+  const parentWorld = bone.parent?.getWorldQuaternion?.(new THREE.Quaternion()) ?? new THREE.Quaternion();
+  const localDelta = parentWorld.clone().invert().multiply(worldDelta).multiply(parentWorld);
+  bone.quaternion.premultiply(localDelta).normalize();
+  bone.updateWorldMatrix(true, false);
+}
+
+function solveLegIk(chain: LegIkChain | undefined, target: any, motion: MotionController): void {
+  if (!chain) return;
+  clearLegIk(chain, motion);
+  const hipBase = chain.hip.quaternion.clone();
+  const kneeBase = chain.knee.quaternion.clone();
+  // CCD retains each rig's existing knee-bend direction, avoiding a forced
+  // global axis and allowing this fallback to work on renamed PMX skeletons.
+  for (let iteration = 0; iteration < 6; iteration += 1) {
+    rotateBoneToward(chain.knee, chain.ankle, target);
+    rotateBoneToward(chain.hip, chain.ankle, target);
+    if (chain.ankle.getWorldPosition(new THREE.Vector3()).distanceTo(target) < 0.002) break;
+  }
+  chain.lastHipOffset.copy(hipBase.clone().invert().multiply(chain.hip.quaternion));
+  chain.lastKneeOffset.copy(kneeBase.clone().invert().multiply(chain.knee.quaternion));
+}
+
 function clearBoneOffsets(life: LifeController, motion: MotionController): void {
   life.eyes.forEach((binding) => applyBoneOffset(binding, IDENTITY, motion));
+  applyBoneOffset(life.jaw, IDENTITY, motion);
   BODY_REGIONS.forEach((region) => applyBoneOffset(life.body[region], IDENTITY, motion));
   applyPositionOffset(life.centerPosition, new THREE.Vector3(), motion);
   applyPositionOffset(life.leftFoot, new THREE.Vector3(), motion);
   applyPositionOffset(life.rightFoot, new THREE.Vector3(), motion);
+  clearLegIk(life.leftLegIk, motion);
+  clearLegIk(life.rightLegIk, motion);
 }
 
 function regionOffset(life: LifeController, region: BodyRegion, delta: number): any {
@@ -383,8 +521,14 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   const settings = state.lifeSettings;
   const zero = new THREE.Vector3();
   const moving = life.anchorVelocity.length() > 0.42;
-  const leftPosition = life.leftFoot?.bone.getWorldPosition?.(new THREE.Vector3());
-  const rightPosition = life.rightFoot?.bone.getWorldPosition?.(new THREE.Vector3());
+  // Start from the animation pose each frame. The procedural solve is an
+  // offset, so it never accumulates knee rotations across frames.
+  clearLegIk(life.leftLegIk, motion);
+  clearLegIk(life.rightLegIk, motion);
+  const leftPosition = life.leftLegIk?.ankle.getWorldPosition?.(new THREE.Vector3())
+    ?? life.leftFoot?.bone.getWorldPosition?.(new THREE.Vector3());
+  const rightPosition = life.rightLegIk?.ankle.getWorldPosition?.(new THREE.Vector3())
+    ?? life.rightFoot?.bone.getWorldPosition?.(new THREE.Vector3());
   const upper = life.body.spineUpper?.bone ?? life.body.spineLower?.bone;
   const upperQuaternion = upper?.getWorldQuaternion?.(new THREE.Quaternion());
   const upperUp = upperQuaternion ? new THREE.Vector3(0, 1, 0).applyQuaternion(upperQuaternion) : null;
@@ -415,8 +559,30 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   const supportShift = life.footStepSide ? -side * Math.sin(Math.PI * progress) * 0.045 * settings.weightShift : 0;
   const footOffset = new THREE.Vector3(side * travel * 0.35, lift, travel);
   applyPositionOffset(life.centerPosition, new THREE.Vector3(supportShift, 0, 0), motion);
-  applyPositionOffset(life.leftFoot, life.footStepSide === 'left' ? footOffset : zero, motion);
-  applyPositionOffset(life.rightFoot, life.footStepSide === 'right' ? footOffset : zero, motion);
+  const leftStepping = life.footStepSide === 'left';
+  const rightStepping = life.footStepSide === 'right';
+  // Prefer the real thigh/knee/ankle chain. The old MMD controller remains a
+  // fallback for non-humanoid rigs where a complete chain cannot be found.
+  if (leftStepping && life.leftLegIk) {
+    const target = life.leftLegIk.ankle.getWorldPosition(new THREE.Vector3());
+    target.x += footOffset.x;
+    target.z += footOffset.z;
+    target.y = Math.min(target.y, life.leftLegIk.floorHeight) + footOffset.y;
+    solveLegIk(life.leftLegIk, target, motion);
+    applyPositionOffset(life.leftFoot, zero, motion);
+  } else {
+    applyPositionOffset(life.leftFoot, leftStepping ? footOffset : zero, motion);
+  }
+  if (rightStepping && life.rightLegIk) {
+    const target = life.rightLegIk.ankle.getWorldPosition(new THREE.Vector3());
+    target.x += footOffset.x;
+    target.z += footOffset.z;
+    target.y = Math.min(target.y, life.rightLegIk.floorHeight) + footOffset.y;
+    solveLegIk(life.rightLegIk, target, motion);
+    applyPositionOffset(life.rightFoot, zero, motion);
+  } else {
+    applyPositionOffset(life.rightFoot, rightStepping ? footOffset : zero, motion);
+  }
 
   if (progress >= 1) {
     life.footStepSide = null;
@@ -443,13 +609,18 @@ export function updateLife(
   if (!settings.enabled) {
     life.blinkKind = null;
     applyBlinkMorphs(life, motion, 0, poseAdvanced);
+    applyFacialMorphs(life.mouthTargets, motion, 0, poseAdvanced);
+    applyFacialMorphs(life.expressionTargets, motion, 0, poseAdvanced);
     clearBoneOffsets(life, motion);
     return;
   }
 
   if (life.lifeTime >= life.nextBlinkAt) triggerBlink(life, motion);
   applyBlinkMorphs(life, motion, blinkProfile(life), poseAdvanced);
-  if (!poseAdvanced) return;
+  updateFace(life, motion, delta, poseAdvanced);
+  // Life remains active while the timeline is paused. The mixer is not
+  // advancing in that case, but gaze, micro-saccades and stance still need to
+  // make a held pose feel alive.
   updateGaze(life, motion, delta);
   updatePostureInertia(life, delta);
 
@@ -487,6 +658,11 @@ export function updateLife(
 
 export function forceBlink(life: LifeController, motion: MotionController, kind: BlinkKind = 'full'): void {
   triggerBlink(life, motion, kind);
+}
+
+export function forceFootReplant(life: LifeController): void {
+  life.footStepSide = null;
+  life.nextFootStepAt = life.lifeTime;
 }
 
 export function blinkMorphNames(life: LifeController): string[] {

@@ -63,10 +63,25 @@ export interface PositionOffsetBinding {
   lastOffset: any;
 }
 
+export interface LegIkChain {
+  hip: any;
+  knee: any;
+  ankle: any;
+  lastHipOffset: any;
+  lastKneeOffset: any;
+  floorHeight: number;
+}
+
 export interface LifeController {
   mesh: any;
   phase: number;
   blinkTargets: BlinkMorphTarget[];
+  mouthTargets: BlinkMorphTarget[];
+  expressionTargets: BlinkMorphTarget[];
+  jaw?: BoneOffsetBinding;
+  mouthValue: number;
+  expressionValue: number;
+  nextExpressionAt: number;
   nextBlinkAt: number;
   lifeTime: number;
   blinkStartedAt: number;
@@ -102,6 +117,8 @@ export interface LifeController {
   nextFootStepAt: number;
   footStepStartedAt: number;
   footStepSide: 'left' | 'right' | null;
+  leftLegIk?: LegIkChain;
+  rightLegIk?: LegIkChain;
 }
 
 export interface PhysicsRuntime {

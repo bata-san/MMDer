@@ -10,16 +10,16 @@ const physicsPart = (
 ): PhysicsPartSettings => ({ enabled: true, response, damping, gravity, wind });
 
 const physicsParts: Record<PhysicsPart, PhysicsPartSettings> = {
-  hairFront: physicsPart(0.72, 0.62, 0.84, 0.72),
-  hairBack: physicsPart(0.92, 0.42, 0.92, 1),
-  hairSide: physicsPart(0.82, 0.5, 0.88, 0.86),
+  hairFront: physicsPart(0.64, 0.74, 0.9, 0.38),
+  hairBack: physicsPart(0.78, 0.64, 0.96, 0.56),
+  hairSide: physicsPart(0.7, 0.7, 0.94, 0.42),
   ears: physicsPart(0.38, 0.88, 0.96, 0),
   skirt: physicsPart(0.9, 0.44, 1.08, 0.78),
   cloth: physicsPart(0.76, 0.55, 1, 0.66),
   accessory: physicsPart(1, 0.36, 0.94, 1.12),
-  chest: physicsPart(0.48, 0.7, 0.92, 0.12),
+  chest: physicsPart(0.24, 0.92, 0.98, 0),
   torso: physicsPart(0.3, 0.82, 1, 0.04),
-  hips: physicsPart(0.34, 0.8, 1, 0.05),
+  hips: physicsPart(0.36, 0.9, 1, 0),
   arms: physicsPart(0.42, 0.75, 1, 0.16),
   legs: physicsPart(0.32, 0.84, 1, 0.04),
 };

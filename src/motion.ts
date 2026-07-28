@@ -90,12 +90,17 @@ export function playMotion(
   controller.actions.set(name, next);
   next.enabled = true;
   next.reset();
+  // Preserve an ease-out at clip edges so a pose does not hit the end with a
+  // visibly abrupt velocity, even for imported VMD tracks with sparse keys.
+  next.zeroSlopeAtStart = true;
+  next.zeroSlopeAtEnd = true;
   next.setLoop(state.loop ? THREE.LoopRepeat : THREE.LoopOnce, state.loop ? Infinity : 1);
   next.clampWhenFinished = !state.loop;
   next.setEffectiveWeight(1).setEffectiveTimeScale(1).play();
 
   const previous = controller.current;
   if (previous && previous !== next) {
+    previous.zeroSlopeAtEnd = true;
     previous.stopFading();
     next.stopFading();
     previous.crossFadeTo(next, Math.max(0.04, blend), true);
