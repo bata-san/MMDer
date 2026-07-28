@@ -40,6 +40,7 @@ function normalizedMorphName(name: string): string {
 }
 
 function collectBlinkTargets(mesh: any): LifeController['blinkTargets'] {
+  const canonical: LifeController['blinkTargets'] = [];
   const exact: LifeController['blinkTargets'] = [];
   const winkFallback: LifeController['blinkTargets'] = [];
   mesh.traverse((node: any) => {
@@ -48,13 +49,18 @@ function collectBlinkTargets(mesh: any): LifeController['blinkTargets'] {
       const index = Number(indexValue);
       const normalized = normalizedMorphName(name);
       const target = { node, name, index, lastProcedural: 0, baseValue: Number(node.morphTargetInfluences[index]) || 0 };
-      const fullBlink = /^(まばたき|瞬き|blink|eyes?close|eyeclose|両目閉じ)$/.test(normalized)
-        || (normalized.includes('まばたき') && !/(笑|smile)/i.test(normalized));
-      if (fullBlink) exact.push(target);
+      const canonicalBlink = /^(まばたき|瞬き|blink|eyes?close|eyeclose|両目閉じ)$/.test(normalized);
+      const fullBlink = canonicalBlink || (normalized.includes('まばたき') && !/(笑|smile)/i.test(normalized));
+      if (canonicalBlink) canonical.push(target);
+      else if (fullBlink) exact.push(target);
       else if ((/(ウィンク|wink)/i.test(normalized) || /^(blink(left|right|l|r)|eye(left|right|l|r)close)$/i.test(normalized)) && !/(笑|smile)/i.test(normalized)) winkFallback.push(target);
     });
   });
-  return exact.length ? exact : winkFallback.slice(0, 2);
+  // A model can expose variants such as "まばたき" and "まばたき2".
+  // They are alternatives, not layers: animate exactly one, preferring the canonical name.
+  if (canonical.length) return canonical.slice(0, 1);
+  if (exact.length) return exact.slice(0, 1);
+  return winkFallback.slice(0, 1);
 }
 
 function findBone(mesh: any, patterns: RegExp[]): any | null {
