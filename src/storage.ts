@@ -65,6 +65,12 @@ export async function removeStoredAsset(id: string): Promise<void> {
   state.assets = state.assets.filter((asset) => asset.id !== id);
 }
 
+export async function removeStoredAssets(kind?: AssetKind): Promise<void> {
+  const targets = state.assets.filter((asset) => !kind || asset.kind === kind);
+  await Promise.all(targets.map((asset) => dbCall('readwrite', (store) => store.delete(asset.id))));
+  state.assets = state.assets.filter((asset) => kind && asset.kind !== kind);
+}
+
 export async function refreshStoredAssets(): Promise<StoredAsset[]> {
   state.assets = await dbCall<StoredAsset[]>('readonly', (store) => store.getAll());
   return state.assets;
