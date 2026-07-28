@@ -15,6 +15,7 @@ import type {
 
 let pointerX = 0;
 let pointerY = 0;
+let xrGazeTarget: any | null = null;
 const IDENTITY = new THREE.Quaternion();
 const JP = {
   left: "\u5de6",
@@ -52,6 +53,11 @@ export function setLifePointer(
     -1,
     1,
   );
+}
+
+/** XR supplies a world-space viewer position. A null target restores normal gaze. */
+export function setLifeXrGazeTarget(target: any | null): void {
+  xrGazeTarget = target?.clone?.() ?? null;
 }
 
 function normal(): number {
@@ -422,6 +428,33 @@ function startBlink(life: LifeController, kind?: BlinkKind): void {
 
 function gaze(life: LifeController, delta: number): void {
   const s = state.lifeSettings;
+  if (xrGazeTarget) {
+    const head = life.body.head?.bone ?? life.body.neck?.bone ?? life.body.hips?.bone;
+    if (head) {
+      const headWorld = head.getWorldPosition(new THREE.Vector3());
+      const direction = xrGazeTarget.clone().sub(headWorld);
+      // Convert only the relative direction into model-local space. This
+      // makes the headset position the live gaze target even when the VR
+      // stage is re-scaled/repositioned to real-world dimensions.
+      const meshWorld = life.mesh.getWorldQuaternion(new THREE.Quaternion());
+      direction.applyQuaternion(meshWorld.invert()).normalize();
+      const planar = Math.hypot(direction.x, direction.z);
+      life.gazeTargetYaw = THREE.MathUtils.clamp(
+        Math.atan2(direction.x, Math.abs(direction.z)),
+        -0.13,
+        0.13,
+      );
+      life.gazeTargetPitch = THREE.MathUtils.clamp(
+        Math.atan2(direction.y, Math.max(planar, 0.001)),
+        -0.06,
+        0.06,
+      );
+      const follow = 1 - Math.exp(-delta * 9);
+      life.gazeYaw += (life.gazeTargetYaw - life.gazeYaw) * follow;
+      life.gazePitch += (life.gazeTargetPitch - life.gazePitch) * follow;
+      return;
+    }
+  }
   if (s.followPointer) {
     life.gazeTargetYaw = pointerX * 0.18 * s.gazeRange;
     life.gazeTargetPitch = pointerY * 0.1 * s.gazeRange;

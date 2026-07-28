@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { setNotice } from './dom.js';
 import { pokeFromRay } from './interaction.js';
+import { setLifeXrGazeTarget } from './life.js';
 import { morphMeshes } from './motion.js';
 import { modelFromObject, setActiveModel } from './models.js';
 import { controls, renderer, resizeScene, scene, stage } from './scene.js';
@@ -15,6 +16,28 @@ xrUi.name = 'XR_MORPH_PANEL';
 xrUi.visible = false;
 let morphIndex = 0;
 let refreshTimer = 0;
+let xrScaleModelId: string | null = null;
+const HUMAN_REFERENCE_HEIGHT_METERS = 1.65;
+
+function fitStageToRealWorld(): void {
+  const model = state.active ?? state.models.find((item) => item.visible);
+  if (!model) return;
+  // PMX has no dependable metres metadata. Its rendered full-body bounding
+  // box is the useful physical reference: map it to an adult standing height,
+  // place its lowest point on the XR local floor, and keep it two metres away.
+  stage.scale.setScalar(1);
+  stage.position.set(0, 0, 0);
+  stage.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(model.mesh);
+  const height = bounds.max.y - bounds.min.y;
+  if (!Number.isFinite(height) || height < 0.01) return;
+  const scale = HUMAN_REFERENCE_HEIGHT_METERS / height;
+  const center = bounds.getCenter(new THREE.Vector3());
+  stage.scale.setScalar(scale);
+  stage.position.set(-center.x * scale, -bounds.min.y * scale, -2);
+  stage.updateWorldMatrix(true, true);
+  xrScaleModelId = model.id;
+}
 
 function setXrStageMode(enabled: boolean): void {
   if (enabled) {
@@ -200,7 +223,13 @@ function createControllerRay(index: number): void {
 }
 
 export function updateXr(delta: number): void {
-  if (!state.xrPresenting || !xrUi.visible) return;
+  if (!state.xrPresenting) return;
+  if ((state.active?.id ?? null) !== xrScaleModelId) fitStageToRealWorld();
+  // renderer.xr supplies the headset pose in metres in local-floor space.
+  const viewer = renderer.xr.getCamera(new THREE.PerspectiveCamera());
+  const viewerPosition = viewer.getWorldPosition(new THREE.Vector3());
+  setLifeXrGazeTarget(viewerPosition);
+  if (!xrUi.visible) return;
   refreshTimer += delta;
   if (refreshTimer >= 0.18) {
     refreshTimer = 0;
@@ -227,6 +256,7 @@ export function setupXr(): void {
     // presentation surface for the exact same scene, not a separate editor.
     controls.enabled = true;
     setXrStageMode(true);
+    fitStageToRealWorld();
     renderer.setPixelRatio(1);
     renderer.xr.setFoveation?.(1);
     xrUi.visible = true;
@@ -238,6 +268,8 @@ export function setupXr(): void {
     state.xrPresenting = false;
     controls.enabled = true;
     xrUi.visible = false;
+    setLifeXrGazeTarget(null);
+    xrScaleModelId = null;
     setXrStageMode(false);
     resizeScene();
     window.dispatchEvent(new Event('mmdlab-xr-change'));
