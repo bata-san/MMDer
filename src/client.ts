@@ -1,8 +1,4 @@
-import '@shoelace-style/shoelace/dist/themes/dark.css';
-import '@shoelace-style/shoelace/dist/components/button/button.js';
 import '../style.css';
-import '../theme-performance.css';
-import '../life-system.css';
 import { mountNotionKitTabs, mountNotionKitToolbar } from './notion-kit-toolbar.js';
 
 type Theme = 'dark' | 'light';

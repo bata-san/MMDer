@@ -18,8 +18,7 @@
     "deploy": "npm run check && wrangler deploy"
   },
   "dependencies": {
-    "@notion-kit/ui": "^1.0.0",
-    "@shoelace-style/shoelace": "2.20.1",
+    "@headlessui/react": "^2.2.10",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "three": "0.166.1",

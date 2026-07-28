@@ -5,3 +5,4 @@ runtime/
 worker-configuration.d.ts
 .DS_Store
 *.log
+.superdesign/tmp/
