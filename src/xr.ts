@@ -4,12 +4,14 @@ import { pokeFromRay } from './interaction.js';
 import { setLifeXrGazeTarget } from './life.js';
 import { morphMeshes } from './motion.js';
 import { modelFromObject, setActiveModel } from './models.js';
+import { touchPhysics } from './physics.js';
 import { controls, renderer, resizeScene, scene, stage } from './scene.js';
 import { state } from './state.js';
 
 type XrAction = 'previous' | 'next' | 'down' | 'up' | 'reset';
 
 const xrRaycaster = new THREE.Raycaster();
+const xrHands: Array<{ controller: any; collider: any; previous: any; velocity: any }> = [];
 const xrUi = new THREE.Group();
 xrUi.name = 'XR_MORPH_PANEL';
 xrUi.visible = false;
@@ -263,6 +265,54 @@ function createControllerRay(index: number): void {
   scene.add(controller);
 }
 
+function createControllerHand(index: number): void {
+  const controller = renderer.xr.getController(index);
+  const hand = new THREE.Group();
+  hand.name = `XR_HAND_${index}`;
+  const glove = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.035, 0.09, 4, 10),
+    new THREE.MeshStandardMaterial({ color: index === 0 ? 0x59a9ff : 0xff8fb2, roughness: 0.52, metalness: 0.08 }),
+  );
+  glove.rotation.x = Math.PI / 2;
+  glove.position.z = -0.075;
+  hand.add(glove);
+  // Three short finger cues make it read as a hand instead of a controller
+  // marker while keeping the actual collision shape stable and inexpensive.
+  [-0.022, 0, 0.022].forEach((x) => {
+    const finger = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.009, 0.04, 3, 6),
+      glove.material,
+    );
+    finger.rotation.x = Math.PI / 2;
+    finger.position.set(x, -0.018, -0.13);
+    hand.add(finger);
+  });
+  controller.add(hand);
+  xrHands.push({
+    controller,
+    collider: glove,
+    previous: new THREE.Vector3(),
+    velocity: new THREE.Vector3(),
+  });
+}
+
+function updateHandContacts(delta: number): void {
+  if (!state.physics || delta <= 0) return;
+  xrHands.forEach((hand) => {
+    const position = hand.collider.getWorldPosition(new THREE.Vector3());
+    if (!hand.previous.lengthSq()) {
+      hand.previous.copy(position);
+      return;
+    }
+    hand.velocity.copy(position).sub(hand.previous).multiplyScalar(1 / Math.max(delta, 1 / 120));
+    hand.velocity.clampLength(0, 2.2);
+    hand.previous.copy(position);
+    state.models.filter((model) => model.visible).forEach((model) => {
+      touchPhysics(model, position, hand.velocity, 0.07, delta);
+    });
+  });
+}
+
 function createXrConnectButton(): HTMLElement {
   const button = document.createElement('button');
   button.id = 'xr-button';
@@ -312,6 +362,7 @@ export function updateXr(delta: number): void {
   const viewerPosition = viewer.getWorldPosition(new THREE.Vector3());
   setLifeXrGazeTarget(viewerPosition);
   applyStickLocomotion(delta);
+  updateHandContacts(delta);
   if (!xrUi.visible) return;
   refreshTimer += delta;
   if (refreshTimer >= 0.18) {
@@ -332,6 +383,8 @@ export function setupXr(): void {
   scene.add(leftGrip);
   createControllerRay(0);
   createControllerRay(1);
+  createControllerHand(0);
+  createControllerHand(1);
   const xrButton = createXrConnectButton();
   // Keep the WebXR connection control beside the PC authoring controls.
   const mount = document.querySelector('#xr-button-mount')

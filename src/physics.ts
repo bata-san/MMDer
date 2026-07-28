@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MMDPhysics } from 'three/addons/animation/MMDPhysics.js';
 import { toast } from './dom.js';
-import { ammoReady } from './scene.js';
+import { ammoReady, stage } from './scene.js';
 import { state } from './state.js';
 import type { PhysicsPart, PhysicsRuntime, SceneModel } from './types.js';
 
@@ -117,6 +117,44 @@ function bodyMass(body: any): number {
   return invMass > 0 ? 1 / invMass : 0;
 }
 
+function toPhysicsWorld(worldPoint: any): any {
+  // MMDPhysics deliberately detaches a scaled parent while stepping so that
+  // Bullet always works in the PMX's native coordinates. In VR the stage is
+  // scaled for real-world presentation, therefore convert external contacts
+  // into that same unscaled stage space before querying rigid bodies.
+  return state.xrPresenting ? stage.worldToLocal(worldPoint.clone()) : worldPoint.clone();
+}
+
+function toPhysicsDirection(worldDirection: any): any {
+  if (!state.xrPresenting) return worldDirection.clone().normalize();
+  const stageRotation = stage.getWorldQuaternion(new THREE.Quaternion());
+  return worldDirection.clone().applyQuaternion(stageRotation.invert()).normalize();
+}
+
+function createMmdPhysicsInNativeSpace(item: SceneModel, mmd: any, selected: PhysicsProfile): any {
+  if (!state.xrPresenting) {
+    return new MMDPhysics(item.mesh, mmd.rigidBodies, mmd.constraints || [], {
+      unitStep: selected.fixedStep,
+      maxStepNum: 1,
+    });
+  }
+  const scale = stage.scale.clone();
+  const position = stage.position.clone();
+  stage.scale.setScalar(1);
+  stage.position.set(0, 0, 0);
+  stage.updateWorldMatrix(true, true);
+  try {
+    return new MMDPhysics(item.mesh, mmd.rigidBodies, mmd.constraints || [], {
+      unitStep: selected.fixedStep,
+      maxStepNum: 1,
+    });
+  } finally {
+    stage.scale.copy(scale);
+    stage.position.copy(position);
+    stage.updateWorldMatrix(true, true);
+  }
+}
+
 function applyContactImpulse(body: any, position: any, contact: any, direction: any, strength: number): void {
   const Ammo = window.Ammo;
   if (!Ammo || !body) return;
@@ -201,10 +239,7 @@ export async function enablePhysics(item: SceneModel | null = state.active): Pro
   try {
     if (!item.physics) {
       const selected = profile();
-      const engine = new MMDPhysics(item.mesh, mmd.rigidBodies, mmd.constraints || [], {
-        unitStep: selected.fixedStep,
-        maxStepNum: 1,
-      });
+      const engine = createMmdPhysicsInNativeSpace(item, mmd, selected);
       item.physics = {
         engine,
         accumulator: 0,
@@ -311,6 +346,11 @@ export function pokePhysics(item: SceneModel, point: any, direction: any, streng
   const Ammo = window.Ammo;
   const bodies = item.physics?.engine?.bodies;
   if (!Ammo || !bodies) return 0;
+  const physicsPoint = toPhysicsWorld(point);
+  const physicsDirection = toPhysicsDirection(direction);
+  const physicsRadius = state.xrPresenting
+    ? radius / Math.max(stage.getWorldScale(new THREE.Vector3()).x, 0.0001)
+    : radius;
   let affected = 0;
   let nearest: { wrapper: any; position: any; distance: number; part: PhysicsPart } | null = null;
   bodies.forEach((wrapper: any) => {
@@ -320,15 +360,15 @@ export function pokePhysics(item: SceneModel, point: any, direction: any, streng
     if (!state.physicsSettings.parts[part].enabled) return;
     const position = bodyPosition(wrapper);
     if (!position) return;
-    const distance = position.distanceTo(point);
+    const distance = position.distanceTo(physicsPoint);
     if (!nearest || distance < nearest.distance) nearest = { wrapper, position, distance, part };
-    if (distance > radius) return;
-    const outward = position.clone().sub(point);
-    if (outward.lengthSq() < 0.0001) outward.copy(direction);
-    else outward.normalize().lerp(direction, 0.2).normalize();
+    if (distance > physicsRadius) return;
+    const outward = position.clone().sub(physicsPoint);
+    if (outward.lengthSq() < 0.0001) outward.copy(physicsDirection);
+    else outward.normalize().lerp(physicsDirection, 0.2).normalize();
     const tuning = state.physicsSettings.parts[part];
-    const impulseAmount = strength * (1 - distance / Math.max(0.001, radius)) * (0.7 + tuning.response * 0.7);
-    applyContactImpulse(body, position, point, outward, impulseAmount);
+    const impulseAmount = strength * (1 - distance / Math.max(0.001, physicsRadius)) * (0.7 + tuning.response * 0.7);
+    applyContactImpulse(body, position, physicsPoint, outward, impulseAmount);
     affected += 1;
   });
 
@@ -336,24 +376,67 @@ export function pokePhysics(item: SceneModel, point: any, direction: any, streng
   // imported PMX places its rigid body farther from the rendered surface.
   if (!affected && nearest) {
     const nearestBody = nearest as { wrapper: any; position: any; distance: number; part: PhysicsPart };
-    const outward = nearestBody.position.clone().sub(point);
-    if (outward.lengthSq() < 0.0001) outward.copy(direction);
+    const outward = nearestBody.position.clone().sub(physicsPoint);
+    if (outward.lengthSq() < 0.0001) outward.copy(physicsDirection);
     else outward.normalize();
-    applyContactImpulse(nearestBody.wrapper.body, nearestBody.position, point, outward, strength * 0.55);
+    applyContactImpulse(nearestBody.wrapper.body, nearestBody.position, physicsPoint, outward, strength * 0.55);
     affected = 1;
   }
   if (!affected) return 0;
   shockwaves.push({
     model: item,
-    origin: point.clone(),
-    direction: direction.clone().normalize(),
+    origin: physicsPoint.clone(),
+    direction: physicsDirection.clone(),
     strength: strength * 0.28,
-    radius: Math.max(0.05, radius),
+    radius: Math.max(0.05, physicsRadius),
     speed: Math.max(0.2, state.interactionSettings.shockwaveSpeed),
     age: 0,
     previousRadius: Math.min(radius, 0.12),
   });
   return 1;
+}
+
+/**
+ * Kinematic VR-hand contact. This is deliberately gentler than a poke: it
+ * samples a palm-sized sphere every XR frame and transfers only the hand's
+ * measured velocity, so hair can be brushed without launching a rigid-body
+ * chain through its PMX constraints.
+ */
+export function touchPhysics(
+  item: SceneModel,
+  worldCenter: any,
+  worldVelocity: any,
+  worldRadius: number,
+  delta: number,
+): number {
+  const bodies = item.physics?.engine?.bodies;
+  if (!bodies || !state.physics || !item.physics?.enabled) return 0;
+  const speed = worldVelocity.length?.() ?? 0;
+  if (speed < 0.015) return 0;
+  const center = toPhysicsWorld(worldCenter);
+  const direction = toPhysicsDirection(worldVelocity);
+  const radius = state.xrPresenting
+    ? worldRadius / Math.max(stage.getWorldScale(new THREE.Vector3()).x, 0.0001)
+    : worldRadius;
+  const strength = THREE.MathUtils.clamp(speed * Math.max(delta, 1 / 120) * 7.5, 0.008, 0.075);
+  let touched = 0;
+  bodies.forEach((wrapper: any) => {
+    const body = wrapper.body;
+    if (!body || bodyMass(body) <= 0) return;
+    const part = partForBody(wrapper, item);
+    if (!state.physicsSettings.parts[part].enabled) return;
+    const position = bodyPosition(wrapper);
+    if (!position) return;
+    const distance = position.distanceTo(center);
+    if (distance > radius) return;
+    const outward = position.clone().sub(center);
+    if (outward.lengthSq() < 0.0001) outward.copy(direction);
+    else outward.normalize().lerp(direction, 0.35).normalize();
+    const falloff = 1 - distance / Math.max(radius, 0.001);
+    applyContactImpulse(body, position, center, outward, strength * falloff);
+    touched += 1;
+  });
+  return touched;
 }
 
 function applyShockwaves(item: SceneModel, delta: number): void {
