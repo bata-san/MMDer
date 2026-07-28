@@ -777,11 +777,9 @@ export function Editor() {
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    const models = state.selectedModels.length
-                      ? state.selectedModels
-                      : state.active
-                        ? [state.active]
-                        : [];
+                    // A test must be visible even when the selection has not
+                    // been refreshed after a library import.
+                    const models = state.models;
                     models.forEach((model) => forceFootReplant(model.life));
                     redraw((n) => n + 1);
                   }}

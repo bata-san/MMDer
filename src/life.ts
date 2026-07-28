@@ -122,11 +122,18 @@ function createLegIkChain(mesh: any, side: 'left' | 'right'): LegIkChain | undef
     new RegExp(`(ankle|foot)[ ._-]?${english[0]}`, 'i'),
   ]);
   if (!hip || !knee || !ankle) return undefined;
+  hip.updateWorldMatrix(true, false);
+  knee.updateWorldMatrix(true, false);
+  ankle.updateWorldMatrix(true, false);
+  const hipPosition = hip.getWorldPosition(new THREE.Vector3());
+  const kneePosition = knee.getWorldPosition(new THREE.Vector3());
+  const anklePosition = ankle.getWorldPosition(new THREE.Vector3());
   return {
     hip,
     knee,
     ankle,
-    floorHeight: ankle.getWorldPosition(new THREE.Vector3()).y,
+    floorHeight: anklePosition.y,
+    legLength: Math.max(0.01, hipPosition.distanceTo(kneePosition) + kneePosition.distanceTo(anklePosition)),
     lastHipOffset: new THREE.Quaternion(),
     lastKneeOffset: new THREE.Quaternion(),
   };
@@ -240,6 +247,8 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     nextFootStepAt: 3 + Math.random() * 4,
     footStepStartedAt: -Infinity,
     footStepSide: null,
+    footStepScale: 1,
+    forceFootStep: false,
   };
 }
 
@@ -520,7 +529,10 @@ function updatePostureInertia(life: LifeController, delta: number): void {
 function updateFootPlacement(life: LifeController, motion: MotionController): void {
   const settings = state.lifeSettings;
   const zero = new THREE.Vector3();
-  const moving = life.anchorVelocity.length() > 0.42;
+  const legLength = Math.max(life.leftLegIk?.legLength ?? 0, life.rightLegIk?.legLength ?? 0, 0.7);
+  // Micro life motion must not suppress a standing replant. Only a real
+  // playing translation is treated as locomotion, and explicit tests win.
+  const moving = state.playing && life.anchorVelocity.length() > legLength * 0.8;
   // Start from the animation pose each frame. The procedural solve is an
   // offset, so it never accumulates knee rotations across frames.
   clearLegIk(life.leftLegIk, motion);
@@ -538,7 +550,7 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
   const rollLean = upperUp ? Math.asin(THREE.MathUtils.clamp(upperUp.x, -1, 1)) : 0;
   const offBalance = Math.abs(lateralLean) > supportWidth * 0.18 || Math.abs(rollLean) > 0.13;
   const correctionSide: 'left' | 'right' = lateralLean + rollLean * supportWidth > 0 ? 'right' : 'left';
-  if (!settings.footReplant || moving) {
+  if (!settings.footReplant || (moving && !life.forceFootStep)) {
     life.footStepSide = null;
     life.nextFootStepAt = Math.max(life.nextFootStepAt, life.lifeTime + 1.6);
     applyPositionOffset(life.centerPosition, zero, motion);
@@ -547,16 +559,17 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
     return;
   }
 
-  if (!life.footStepSide && (offBalance || life.lifeTime >= life.nextFootStepAt)) {
+  if (!life.footStepSide && (life.forceFootStep || offBalance || life.lifeTime >= life.nextFootStepAt)) {
     life.footStepSide = offBalance ? correctionSide : Math.random() < 0.5 ? 'left' : 'right';
     life.footStepStartedAt = life.lifeTime;
   }
   const cycle = life.footStepSide ? (life.lifeTime - life.footStepStartedAt) / 0.72 : 0;
   const progress = THREE.MathUtils.clamp(cycle, 0, 1);
-  const lift = Math.sin(Math.PI * progress) * 0.055 * settings.footReplant;
-  const travel = Math.sin(Math.PI * progress) * 0.035 * settings.footReplant;
+  const stepScale = life.footStepScale;
+  const lift = Math.sin(Math.PI * progress) * legLength * 0.1 * settings.footReplant * stepScale;
+  const travel = Math.sin(Math.PI * progress) * legLength * 0.075 * settings.footReplant * stepScale;
   const side = life.footStepSide === 'left' ? -1 : 1;
-  const supportShift = life.footStepSide ? -side * Math.sin(Math.PI * progress) * 0.045 * settings.weightShift : 0;
+  const supportShift = life.footStepSide ? -side * Math.sin(Math.PI * progress) * legLength * 0.06 * settings.weightShift * stepScale : 0;
   const footOffset = new THREE.Vector3(side * travel * 0.35, lift, travel);
   applyPositionOffset(life.centerPosition, new THREE.Vector3(supportShift, 0, 0), motion);
   const leftStepping = life.footStepSide === 'left';
@@ -586,6 +599,8 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
 
   if (progress >= 1) {
     life.footStepSide = null;
+    life.footStepScale = 1;
+    life.forceFootStep = false;
     life.nextFootStepAt = life.lifeTime + THREE.MathUtils.lerp(3.5, 8.5, Math.random());
   }
 }
@@ -662,6 +677,8 @@ export function forceBlink(life: LifeController, motion: MotionController, kind:
 
 export function forceFootReplant(life: LifeController): void {
   life.footStepSide = null;
+  life.footStepScale = 2.2;
+  life.forceFootStep = true;
   life.nextFootStepAt = life.lifeTime;
 }
 

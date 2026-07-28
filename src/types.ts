@@ -70,6 +70,7 @@ export interface LegIkChain {
   lastHipOffset: any;
   lastKneeOffset: any;
   floorHeight: number;
+  legLength: number;
 }
 
 export interface LifeController {
@@ -117,6 +118,8 @@ export interface LifeController {
   nextFootStepAt: number;
   footStepStartedAt: number;
   footStepSide: 'left' | 'right' | null;
+  footStepScale: number;
+  forceFootStep: boolean;
   leftLegIk?: LegIkChain;
   rightLegIk?: LegIkChain;
 }
