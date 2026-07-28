@@ -59,10 +59,12 @@ controls.dampingFactor = 0.06;
 controls.minPolarAngle = 0;
 controls.maxPolarAngle = Math.PI;
 controls.mouseButtons = {
-  LEFT: THREE.MOUSE.PAN,
+  // Keep the primary button free for selection and physics interaction.
+  LEFT: null,
   MIDDLE: THREE.MOUSE.ROTATE,
-  RIGHT: THREE.MOUSE.PAN,
+  RIGHT: null,
 };
+controls.enablePan = false;
 controls.screenSpacePanning = true;
 
 let blenderPan: { x: number; y: number } | null = null;
@@ -89,6 +91,7 @@ window.addEventListener('pointerup', () => {
   blenderPan = null;
   controls.enabled = true;
 });
+canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
 export const transform = new TransformControls(camera, renderer.domElement);
 transform.setMode('translate');
