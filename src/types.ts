@@ -67,6 +67,14 @@ export interface FootIkRuntime {
   binding: PositionOffsetBinding;
   solver: any;
   floorHeight: number;
+  /** World-space controller location at the unmodified pose. */
+  restTarget: any;
+  /** Controller height minus the visual ankle height at rest. */
+  contactOffset: number;
+  /** Persistent planted contact; it is updated only after a completed step. */
+  plantedTarget: any;
+  /** Unmodified local rotations captured immediately before the prior solve. */
+  linkBases: Array<{ bone: any; quaternion: any; name: string }>;
 }
 
 export interface LegIkChain {
@@ -128,6 +136,8 @@ export interface LifeController {
   footStepSide: 'left' | 'right' | null;
   footStepScale: number;
   forceFootStep: boolean;
+  /** Test-only COM offset used by the life lab; zero during normal editing. */
+  balanceTestOffsetX: number;
   leftLegIk?: LegIkChain;
   rightLegIk?: LegIkChain;
 }

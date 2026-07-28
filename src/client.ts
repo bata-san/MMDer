@@ -16,5 +16,9 @@ void (async () => {
     const { startIkLab } = await import('./ik-lab');
     void startIkLab();
   }
+  if (new URLSearchParams(location.search).has('life-lab')) {
+    const { startLifeLab } = await import('./life-lab');
+    void startLifeLab();
+  }
   window.dispatchEvent(new Event('resize'));
 })();

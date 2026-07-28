@@ -10,6 +10,7 @@ declare module 'three/addons/loaders/RGBELoader.js' { export const RGBELoader: a
 declare module 'three/addons/controls/TransformControls.js' { export const TransformControls: any; }
 declare module 'three/addons/animation/MMDPhysics.js' { export const MMDPhysics: any; }
 declare module 'three/addons/animation/CCDIKSolver.js' { export const CCDIKSolver: any; }
+declare module 'three/addons/animation/MMDAnimationHelper.js' { export const MMDAnimationHelper: any; }
 declare module 'three/addons/webxr/VRButton.js' { export const VRButton: any; }
 declare module 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js' {
   export function unzipSync(data: Uint8Array): Record<string, Uint8Array>;

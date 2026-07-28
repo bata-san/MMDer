@@ -1,10 +1,10 @@
-import { updateInteraction, setupInteraction } from './interaction.js';
-import { updateLife } from './life.js';
-import { recomputeDuration } from './motion.js';
-import { updateRigHandles } from './models.js';
-import { stepPhysics } from './physics.js';
-import { state } from './state.js';
-import { refreshStoredAssets } from './storage.js';
+import { updateInteraction, setupInteraction } from "./interaction.js";
+import { updateLife } from "./life.js";
+import { recomputeDuration } from "./motion.js";
+import { updateRigHandles } from "./models.js";
+import { stepPhysics } from "./physics.js";
+import { state } from "./state.js";
+import { refreshStoredAssets } from "./storage.js";
 import {
   clock,
   controls,
@@ -13,8 +13,8 @@ import {
   renderer,
   resizeScene,
   setRenderScale,
-} from './scene.js';
-import { setupXr } from './xr.js';
+} from "./scene.js";
+import { setupXr } from "./xr.js";
 
 let frameCount = 0;
 let fpsStartedAt = performance.now();
@@ -43,8 +43,10 @@ function updatePerformance(now: number): void {
   qualitySamples += 1;
   if (qualitySamples < 4) return;
   qualitySamples = 0;
-  if (fps < 46 && state.renderScale > 0.7) setRenderScale(state.renderScale - 0.1);
-  else if (fps > 58 && state.renderScale < 1) setRenderScale(state.renderScale + 0.05);
+  if (fps < 46 && state.renderScale > 0.7)
+    setRenderScale(state.renderScale - 0.1);
+  else if (fps > 58 && state.renderScale < 1)
+    setRenderScale(state.renderScale + 0.05);
 }
 
 function animate(): void {
@@ -71,7 +73,7 @@ async function start(): Promise<void> {
   await refreshStoredAssets();
   recomputeDuration();
   loadDefaultHdr();
-  window.addEventListener('resize', resizeScene);
+  window.addEventListener("resize", resizeScene);
   renderer.setAnimationLoop(animate);
 }
 

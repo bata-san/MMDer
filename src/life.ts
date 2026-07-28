@@ -1,238 +1,243 @@
-import * as THREE from 'three';
-import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
-import { blinkEnvelope, minimumJerk } from './life-math.js';
-import { motionControlsBone, motionControlsMorph } from './motion.js';
-import { state } from './state.js';
+import * as THREE from "three";
+import { CCDIKSolver } from "three/addons/animation/CCDIKSolver.js";
+import { blinkEnvelope, minimumJerk } from "./life-math.js";
+import { motionControlsBone, motionControlsMorph } from "./motion.js";
+import { state } from "./state.js";
 import type {
   BlinkKind,
   BodyRegion,
   BoneOffsetBinding,
   FootIkRuntime,
-  LegIkChain,
   LifeController,
   MotionController,
   PositionOffsetBinding,
-} from './types.js';
+} from "./types.js";
 
 let pointerX = 0;
 let pointerY = 0;
-
 const IDENTITY = new THREE.Quaternion();
-const BODY_REGIONS: BodyRegion[] = [
-  'center', 'hips', 'spineLower', 'spineUpper',
-  'shoulderLeft', 'shoulderRight', 'neck', 'head',
-];
+const JP = {
+  left: "\u5de6",
+  right: "\u53f3",
+  foot: "\u8db3",
+  knee: "\u3072\u3056",
+  ankle: "\u8db3\u9996",
+  ik: "IK",
+  eye: "\u76ee",
+  bothEyes: "\u4e21\u76ee",
+  center: "\u30bb\u30f3\u30bf\u30fc",
+  hips: "\u4e0b\u534a\u8eab",
+  upper: "\u4e0a\u534a\u8eab",
+  neck: "\u9996",
+  head: "\u982d",
+  blink: "\u307e\u3070\u305f\u304d",
+};
 
-export function setLifePointer(clientX: number, clientY: number, viewport?: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>): void {
+export function setLifePointer(
+  clientX: number,
+  clientY: number,
+  viewport?: Pick<DOMRect, "left" | "top" | "width" | "height">,
+): void {
   const left = viewport?.left ?? 0;
   const top = viewport?.top ?? 0;
   const width = viewport?.width ?? innerWidth;
   const height = viewport?.height ?? innerHeight;
-  pointerX = Math.max(-1, Math.min(1, (clientX - left) / Math.max(1, width) * 2 - 1));
-  pointerY = Math.max(-1, Math.min(1, -((clientY - top) / Math.max(1, height) * 2 - 1)));
+  pointerX = THREE.MathUtils.clamp(
+    ((clientX - left) / Math.max(width, 1)) * 2 - 1,
+    -1,
+    1,
+  );
+  pointerY = THREE.MathUtils.clamp(
+    -(((clientY - top) / Math.max(height, 1)) * 2 - 1),
+    -1,
+    1,
+  );
 }
 
-function normalRandom(): number {
-  const a = Math.max(Number.EPSILON, Math.random());
-  const b = Math.max(Number.EPSILON, Math.random());
+function normal(): number {
+  const a = Math.max(Math.random(), Number.EPSILON);
+  const b = Math.max(Math.random(), Number.EPSILON);
   return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * b);
 }
-
-function logNormalInterval(mean: number, sigma = 0.5): number {
-  const mu = Math.log(Math.max(0.2, mean)) - sigma * sigma / 2;
-  return Math.exp(mu + sigma * normalRandom());
+function bone(mesh: any, names: string[], english: RegExp[] = []): any | null {
+  return (
+    mesh.skeleton?.bones?.find(
+      (b: any) => names.includes(b.name) || english.some((p) => p.test(b.name)),
+    ) ?? null
+  );
+}
+function bind(b: any | null): BoneOffsetBinding | undefined {
+  return b
+    ? { bone: b, name: b.name, lastOffset: new THREE.Quaternion() }
+    : undefined;
+}
+function posBind(b: any | null): PositionOffsetBinding | undefined {
+  return b
+    ? { bone: b, name: b.name, lastOffset: new THREE.Vector3() }
+    : undefined;
+}
+function normalized(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s_.\-]/g, "");
 }
 
-function normalizedMorphName(name: string): string {
-  return name.normalize('NFKC').toLowerCase().replace(/[\s_\-・.]/g, '');
+function bodyBindings(mesh: any): LifeController["body"] {
+  return {
+    center: bind(bone(mesh, [JP.center], [/^center$/i])),
+    hips: bind(bone(mesh, [JP.hips, "\u8170"], [/hips|pelvis|lowerbody/i])),
+    spineLower: bind(bone(mesh, [JP.upper], [/^spine$|upperbody/i])),
+    spineUpper: bind(
+      bone(mesh, [`${JP.upper}2`], [/chest|spine2|upperbody2/i]),
+    ),
+    shoulderLeft: bind(
+      bone(mesh, [`${JP.left}\u80a9`], [/left.?shoulder|shoulder[_ .-]?l/i]),
+    ),
+    shoulderRight: bind(
+      bone(mesh, [`${JP.right}\u80a9`], [/right.?shoulder|shoulder[_ .-]?r/i]),
+    ),
+    neck: bind(bone(mesh, [JP.neck], [/^neck$/i])),
+    head: bind(bone(mesh, [JP.head], [/^head$/i])),
+  };
 }
 
-function collectBlinkTargets(mesh: any): LifeController['blinkTargets'] {
-  const canonical: LifeController['blinkTargets'] = [];
-  const exact: LifeController['blinkTargets'] = [];
-  const winkFallback: LifeController['blinkTargets'] = [];
+function eyes(mesh: any): BoneOffsetBinding[] {
+  const both = bone(mesh, [JP.bothEyes], [/^(both.?eyes?|eyes)$/i]);
+  if (both) return [bind(both)!];
+  return [
+    bind(bone(mesh, [`${JP.left}${JP.eye}`], [/left.?eye|eye[_ .-]?l/i])),
+    bind(bone(mesh, [`${JP.right}${JP.eye}`], [/right.?eye|eye[_ .-]?r/i])),
+  ].filter(Boolean) as BoneOffsetBinding[];
+}
+
+function morphs(
+  mesh: any,
+  kind: "blink" | "mouth" | "expression",
+): LifeController["blinkTargets"] {
+  const out: LifeController["blinkTargets"] = [];
   mesh.traverse((node: any) => {
-    if (!node.isMesh || !node.morphTargetDictionary || !node.morphTargetInfluences) return;
-    Object.entries(node.morphTargetDictionary as Record<string, number>).forEach(([name, indexValue]) => {
-      const index = Number(indexValue);
-      const normalized = normalizedMorphName(name);
-      const target = { node, name, index, lastProcedural: 0, baseValue: Number(node.morphTargetInfluences[index]) || 0 };
-      const canonicalBlink = /^(まばたき|瞬き|blink|eyes?close|eyeclose|両目閉じ)$/.test(normalized);
-      const fullBlink = canonicalBlink || (normalized.includes('まばたき') && !/(笑|smile)/i.test(normalized));
-      if (canonicalBlink) canonical.push(target);
-      else if (fullBlink) exact.push(target);
-      else if ((/(ウィンク|wink)/i.test(normalized) || /^(blink(left|right|l|r)|eye(left|right|l|r)close)$/i.test(normalized)) && !/(笑|smile)/i.test(normalized)) winkFallback.push(target);
-    });
-  });
-  // A model can expose variants such as "まばたき" and "まばたき2".
-  // They are alternatives, not layers: animate exactly one, preferring the canonical name.
-  if (canonical.length) return canonical.slice(0, 1);
-  if (exact.length) return exact.slice(0, 1);
-  return winkFallback.slice(0, 1);
-}
-
-function findBone(mesh: any, patterns: RegExp[]): any | null {
-  let match: any | null = null;
-  mesh.traverse((node: any) => {
-    if (!match && node.isBone && patterns.some((pattern) => pattern.test(node.name))) match = node;
-  });
-  return match;
-}
-
-function boneBinding(bone: any | null): BoneOffsetBinding | null {
-  return bone ? { bone, name: bone.name, lastOffset: new THREE.Quaternion() } : null;
-}
-
-function collectFacialMorphs(mesh: any): { mouth: LifeController['mouthTargets']; expression: LifeController['expressionTargets'] } {
-  const mouth: LifeController['mouthTargets'] = [];
-  const expression: LifeController['expressionTargets'] = [];
-  mesh.traverse((node: any) => {
-    if (!node.isMesh || !node.morphTargetDictionary || !node.morphTargetInfluences) return;
-    Object.entries(node.morphTargetDictionary as Record<string, number>).forEach(([name, indexValue]) => {
-      const normalized = normalizedMorphName(name);
-      const target = { node, name, index: Number(indexValue), lastProcedural: 0, baseValue: 0 };
-      if (/(あ|い|う|え|お|口|リップ|mouth|lip|vowel|open)/i.test(normalized) && !/(目|eye|blink)/i.test(normalized)) {
-        mouth.push(target);
-      } else if (/(笑|にこ|微笑|smile|happy|joy|grin)/i.test(normalized)) {
-        expression.push(target);
+    if (
+      !node.isMesh ||
+      !node.morphTargetDictionary ||
+      !node.morphTargetInfluences
+    )
+      return;
+    Object.entries(
+      node.morphTargetDictionary as Record<string, number>,
+    ).forEach(([name, raw]) => {
+      const key = normalized(name);
+      const isBlink =
+        key.includes(normalized(JP.blink)) || /blink|eyeclose|wink/.test(key);
+      const isMouth =
+        /mouth|lip|vowel|open/.test(key) ||
+        ["\u3042", "\u3044", "\u3046", "\u3048", "\u304a"].includes(key);
+      const isExpression =
+        /smile|happy|joy|grin/.test(key) || key.includes("\u7b11");
+      if (
+        (kind === "blink" && isBlink) ||
+        (kind === "mouth" && isMouth && !isBlink) ||
+        (kind === "expression" && isExpression)
+      ) {
+        out.push({
+          node,
+          name,
+          index: Number(raw),
+          lastProcedural: 0,
+          baseValue: Number(node.morphTargetInfluences[Number(raw)]) || 0,
+        });
       }
     });
   });
-  return { mouth: mouth.slice(0, 1), expression: expression.slice(0, 1) };
+  return out.slice(0, kind === "blink" ? 1 : 2);
 }
 
-function positionBinding(bone: any | null): PositionOffsetBinding | null {
-  return bone ? { bone, name: bone.name, lastOffset: new THREE.Vector3() } : null;
-}
-
-function createLegIkChain(mesh: any, side: 'left' | 'right'): LegIkChain | undefined {
-  const japanese = side === 'left' ? '左' : '右';
-  const english = side === 'left' ? 'left' : 'right';
-  const hip = findBone(mesh, [
-    new RegExp(`^${japanese}足$`, 'i'),
-    new RegExp(`^${english}[ ._-]?(thigh|upper.?leg|leg)$`, 'i'),
-    new RegExp(`(thigh|upper.?leg)[ ._-]?${english[0]}`, 'i'),
-  ]);
-  const knee = findBone(mesh, [
-    new RegExp(`^${japanese}(ひざ|膝)$`, 'i'),
-    new RegExp(`^${english}[ ._-]?knee$`, 'i'),
-    new RegExp(`knee[ ._-]?${english[0]}`, 'i'),
-  ]);
-  const ankle = findBone(mesh, [
-    new RegExp(`^${japanese}足首$`, 'i'),
-    new RegExp(`^${english}[ ._-]?(ankle|foot)$`, 'i'),
-    new RegExp(`(ankle|foot)[ ._-]?${english[0]}`, 'i'),
-  ]);
-  if (!hip || !knee || !ankle) return undefined;
-  hip.updateWorldMatrix(true, false);
-  knee.updateWorldMatrix(true, false);
-  ankle.updateWorldMatrix(true, false);
-  const hipPosition = hip.getWorldPosition(new THREE.Vector3());
-  const kneePosition = knee.getWorldPosition(new THREE.Vector3());
-  const anklePosition = ankle.getWorldPosition(new THREE.Vector3());
+function footRuntime(
+  mesh: any,
+  side: "left" | "right",
+): FootIkRuntime | undefined {
+  const prefix = side === "left" ? JP.left : JP.right;
+  const controller = bone(
+    mesh,
+    [`${prefix}${JP.foot}${JP.ik}`, `${prefix}${JP.foot}\uff29\uff2b`],
+    [new RegExp(`${side}.?foot.?ik|foot.?ik.?${side[0]}`, "i")],
+  );
+  if (!controller || !mesh.geometry?.userData?.MMD?.iks) return undefined;
+  const target = mesh.skeleton.bones.indexOf(controller);
+  const definition = mesh.geometry.userData.MMD.iks.find(
+    (entry: any) => entry.target === target,
+  );
+  if (!definition) return undefined;
+  // PMX often specifies a single 5° CCD turn because the native runtime
+  // repeatedly evaluates it. The life layer has its own held-pose solve, so
+  // clone and converge only this leg chain; do not mutate the model's shared
+  // IK definition used by the rest of the editor.
+  const lifeDefinition = {
+    ...definition,
+    links: definition.links.map((link: any) => ({
+      ...link,
+      // Preserve the PMX hinge axis but let the life solver use its bounded
+      // CCD angle instead of the authored per-frame rotation clamp.
+      rotationMin: undefined,
+      rotationMax: undefined,
+    })),
+    iteration: Math.min(8, Math.max(6, Number(definition.iteration) || 1)),
+    maxAngle: Math.min(THREE.MathUtils.degToRad(12), Math.max(THREE.MathUtils.degToRad(10), Number(definition.maxAngle) || 0)),
+  };
+  const ankle = bone(
+    mesh,
+    [`${prefix}${JP.ankle}`],
+    [new RegExp(`${side}.?(ankle|foot)$|(ankle|foot).?${side[0]}`, "i")],
+  );
+  mesh.updateWorldMatrix(true, true);
+  const restTarget = controller.getWorldPosition(new THREE.Vector3());
+  // PMX IK controllers are authored in the same world floor as the rendered
+  // sole.  An ankle bone is not a sole marker (high heels, toe bones and D
+  // chains all differ), so deriving contact from ankle height makes one foot
+  // hover on asymmetric rigs.  Keep each controller's authored floor offset.
+  void ankle;
   return {
-    hip,
-    knee,
-    ankle,
-    floorHeight: anklePosition.y,
-    legLength: Math.max(0.01, hipPosition.distanceTo(kneePosition) + kneePosition.distanceTo(anklePosition)),
-    lastHipOffset: new THREE.Quaternion(),
-    lastKneeOffset: new THREE.Quaternion(),
+    binding: posBind(controller)!,
+    solver: new CCDIKSolver(mesh, [lifeDefinition]),
+    floorHeight: 0,
+    restTarget,
+    contactOffset: restTarget.y,
+    plantedTarget: restTarget.clone(),
+    linkBases: [],
   };
 }
 
-function createFootIkRuntime(mesh: any, binding: PositionOffsetBinding | undefined): FootIkRuntime | undefined {
-  if (!binding || !mesh.skeleton?.bones) return undefined;
-  const target = mesh.skeleton.bones.indexOf(binding.bone);
-  const ik = mesh.geometry?.userData?.MMD?.iks?.find((candidate: any) => candidate.target === target);
-  if (!ik) return undefined;
-  return { binding, solver: new CCDIKSolver(mesh, [ik]), floorHeight: binding.bone.getWorldPosition(new THREE.Vector3()).y };
-}
-
-function collectEyeBindings(mesh: any): BoneOffsetBinding[] {
-  const both = findBone(mesh, [/^(両目|eyes|both.?eyes)$/i, /両目|both.?eye/i]);
-  if (both) return [boneBinding(both)!];
-  return [
-    findBone(mesh, [/^(左目|left.?eye|eye[_ .-]?l)$/i, /左目|left.?eye|eye[_ .-]?l/i]),
-    findBone(mesh, [/^(右目|right.?eye|eye[_ .-]?r)$/i, /右目|right.?eye|eye[_ .-]?r/i]),
-  ].filter(Boolean).map((bone) => boneBinding(bone)!);
-}
-
-function collectBodyBindings(mesh: any): LifeController['body'] {
-  return {
-    center: boneBinding(findBone(mesh, [/^センター$/i, /^center$/i])) ?? undefined,
-    hips: boneBinding(findBone(mesh, [/^下半身$/i, /^腰$/i, /^(hips|pelvis|lower.?body)$/i])) ?? undefined,
-    spineLower: boneBinding(findBone(mesh, [/^上半身$/i, /^(spine|upper.?body)$/i])) ?? undefined,
-    spineUpper: boneBinding(findBone(mesh, [/^上半身2$/i, /^(chest|spine.?2|upper.?body.?2)$/i])) ?? undefined,
-    shoulderLeft: boneBinding(findBone(mesh, [/^左肩$/i, /^(left.?shoulder|shoulder[_ .-]?l)$/i])) ?? undefined,
-    shoulderRight: boneBinding(findBone(mesh, [/^右肩$/i, /^(right.?shoulder|shoulder[_ .-]?r)$/i])) ?? undefined,
-    neck: boneBinding(findBone(mesh, [/^首$/i, /^neck$/i])) ?? undefined,
-    head: boneBinding(findBone(mesh, [/^頭$/i, /^head$/i])) ?? undefined,
-  };
-}
-
-function quaternionTrack(name: string, rotations: Array<[number, number, number]>): any {
-  const times = [0, 0.25, 0.5, 0.75, 1];
-  const values: number[] = [];
-  rotations.forEach(([x, y, z]) => {
-    values.push(...new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z)).toArray());
-  });
-  return new THREE.QuaternionKeyframeTrack(`.bones[${name}].quaternion`, times, values);
-}
-
-function createBreathAction(mesh: any, motion: MotionController): { clip: any | null; action: any | null } {
-  const lower = findBone(mesh, [/^上半身$/i, /^(spine|upper.?body)$/i]);
-  const upper = findBone(mesh, [/^上半身2$/i, /^(chest|spine.?2|upper.?body.?2)$/i]);
-  const leftShoulder = findBone(mesh, [/^左肩$/i, /^(left.?shoulder|shoulder[_ .-]?l)$/i]);
-  const rightShoulder = findBone(mesh, [/^右肩$/i, /^(right.?shoulder|shoulder[_ .-]?r)$/i]);
-  const neck = findBone(mesh, [/^首$/i, /^neck$/i]);
-  const tracks: any[] = [];
-  // Breathing is deliberately confined below the neck.  A neck track is
-  // visually amplified by many PMX parent chains and can produce impossible
-  // head rotations on models with a 首IK or auxiliary head bone.
-  if (lower) tracks.push(quaternionTrack(lower.name, [[0, 0, 0], [0.006, 0, 0], [0, 0, 0], [-0.002, 0, 0], [0, 0, 0]]));
-  if (upper) tracks.push(quaternionTrack(upper.name, [[0, 0, 0], [0.011, 0, 0.001], [0, 0, 0], [-0.003, 0, -0.001], [0, 0, 0]]));
-  if (leftShoulder) tracks.push(quaternionTrack(leftShoulder.name, [[0, 0, 0], [0, 0, -0.0025], [0, 0, 0], [0, 0, 0.001], [0, 0, 0]]));
-  if (rightShoulder) tracks.push(quaternionTrack(rightShoulder.name, [[0, 0, 0], [0, 0, 0.0025], [0, 0, 0], [0, 0, -0.001], [0, 0, 0]]));
-  if (!tracks.length) return { clip: null, action: null };
-  const clip = new THREE.AnimationClip('Life breathing additive', 1, tracks);
-  THREE.AnimationUtils.makeClipAdditive(clip, 0, clip, 30);
-  const action = motion.mixer.clipAction(clip);
-  action.setLoop(THREE.LoopRepeat, Infinity);
-  action.enabled = true;
-  action.play();
-  return { clip, action };
-}
-
-export function createLifeController(mesh: any, motion: MotionController): LifeController {
-  const breath = createBreathAction(mesh, motion);
-  const facial = collectFacialMorphs(mesh);
-  const swayNoise: LifeController['swayNoise'] = {};
-  const body = collectBodyBindings(mesh);
-  const leftFoot = positionBinding(findBone(mesh, [/^左足ＩＫ$/i, /^(left.?foot.?ik|foot[_ .-]?ik[_ .-]?l)$/i])) ?? undefined;
-  const rightFoot = positionBinding(findBone(mesh, [/^右足ＩＫ$/i, /^(right.?foot.?ik|foot[_ .-]?ik[_ .-]?r)$/i])) ?? undefined;
-  const anchor = body.hips?.bone ?? body.center?.bone ?? body.spineLower?.bone ?? mesh;
-  const anchorPosition = anchor.getWorldPosition(new THREE.Vector3());
-  BODY_REGIONS.forEach((region) => { swayNoise[region] = 0; });
+export function createLifeController(
+  mesh: any,
+  motion: MotionController,
+): LifeController {
+  const body = bodyBindings(mesh);
+  const anchor = body.hips?.bone ?? body.center?.bone ?? mesh;
+  const blinkTargets = morphs(mesh, "blink");
+  const mouthTargets = morphs(mesh, "mouth");
+  const expressionTargets = morphs(mesh, "expression");
+  const phase = Math.random() * Math.PI * 2;
+  const leftFootIk = footRuntime(mesh, "left");
+  const rightFootIk = footRuntime(mesh, "right");
   return {
     mesh,
-    phase: Math.random() * Math.PI * 2,
-    blinkTargets: collectBlinkTargets(mesh),
-    mouthTargets: facial.mouth,
-    expressionTargets: facial.expression,
-    jaw: boneBinding(findBone(mesh, [/^顎$/i, /^jaw$/i, /^mouth$/i])) ?? undefined,
+    phase,
+    blinkTargets,
+    mouthTargets,
+    expressionTargets,
+    jaw: bind(bone(mesh, ["\u3042", "\u820c", "\u53e3"], [/jaw|mouth/i])),
     mouthValue: 0,
     expressionValue: 0,
     nextExpressionAt: 2 + Math.random() * 4,
-    nextBlinkAt: 1.5 + Math.random() * 3,
+    nextBlinkAt: 1 + Math.random() * 3,
     lifeTime: 0,
     blinkStartedAt: 0,
-    blinkDuration: 0.18,
+    blinkDuration: 0.19,
     blinkKind: null,
     blinkPeak: 0,
-    breathClip: breath.clip,
-    breathAction: breath.action,
-    eyes: collectEyeBindings(mesh),
+    breathClip: null,
+    breathAction: null,
+    eyes: eyes(mesh),
     body,
     gazeStartYaw: 0,
     gazeStartPitch: 0,
@@ -241,413 +246,316 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     gazeTargetYaw: 0,
     gazeTargetPitch: 0,
     gazeElapsed: 0,
-    gazeDuration: 0.06,
-    nextGazeAt: 0.8 + Math.random() * 1.6,
+    gazeDuration: 0.2,
+    nextGazeAt: 0.5 + Math.random(),
     microYaw: 0,
     microPitch: 0,
     microTargetYaw: 0,
     microTargetPitch: 0,
-    nextMicroAt: 0.25 + Math.random() * 0.7,
-    swayNoise,
-    anchorPosition,
+    nextMicroAt: 0.2 + Math.random() * 0.5,
+    swayNoise: {},
+    anchorPosition: anchor.getWorldPosition(new THREE.Vector3()),
     anchorVelocity: new THREE.Vector3(),
     posturePitch: 0,
     postureRoll: 0,
-    centerPosition: positionBinding(body.center?.bone ?? body.hips?.bone) ?? undefined,
-    leftFoot,
-    rightFoot,
-    leftFootIk: createFootIkRuntime(mesh, leftFoot),
-    rightFootIk: createFootIkRuntime(mesh, rightFoot),
-    nextFootStepAt: 3 + Math.random() * 4,
+    centerPosition: posBind(body.center?.bone ?? body.hips?.bone ?? null),
+    leftFoot: undefined,
+    rightFoot: undefined,
+    leftFootIk,
+    rightFootIk,
+    nextFootStepAt: Infinity,
     footStepStartedAt: -Infinity,
     footStepSide: null,
     footStepScale: 1,
     forceFootStep: false,
+    balanceTestOffsetX: 0,
   };
 }
 
-function scheduleBlink(life: LifeController): void {
-  const activity = Math.max(0.05, state.lifeSettings.blinkActivity);
-  const meanInterval = 10.4 - activity * 6.8;
-  const interval = logNormalInterval(meanInterval, 0.54);
-  life.nextBlinkAt = life.lifeTime + Math.max(1.15, Math.min(16, interval));
-}
-
-function captureBlinkBases(life: LifeController, motion: MotionController, poseAdvanced: boolean): void {
-  life.blinkTargets.forEach((target) => {
-    const influences = target.node.morphTargetInfluences as number[] | undefined;
-    if (!influences || target.index < 0 || target.index >= influences.length) return;
-    const current = Number(influences[target.index]) || 0;
-    const mixerOwnsMorph = poseAdvanced && motionControlsMorph(motion, target.name, target.index);
-    target.baseValue = THREE.MathUtils.clamp(mixerOwnsMorph ? current : current - target.lastProcedural, 0, 1);
-    influences[target.index] = target.baseValue;
-    target.lastProcedural = 0;
-  });
-}
-
-function triggerBlink(life: LifeController, motion: MotionController, forcedKind?: BlinkKind): void {
-  if (!life.blinkTargets.length) return;
-  const restarting = Boolean(forcedKind && life.blinkKind);
-  if (restarting) {
-    captureBlinkBases(life, motion, false);
-    life.blinkKind = null;
-  }
-  if (life.blinkKind) return;
-  captureBlinkBases(life, motion, state.playing);
-  const random = Math.random();
-  const settings = state.lifeSettings;
-  const kind: BlinkKind = forcedKind
-    ?? (random < settings.doubleBlinkChance ? 'double'
-      : random < settings.doubleBlinkChance + settings.softBlinkChance ? 'soft' : 'full');
-  const baseDuration = kind === 'double' ? 0.38 : kind === 'soft' ? 0.16 : 0.205;
-  life.blinkKind = kind;
-  life.blinkStartedAt = life.lifeTime;
-  life.blinkDuration = baseDuration * THREE.MathUtils.lerp(0.75, 1.4, settings.blinkDuration) * (0.9 + Math.random() * 0.2);
-  life.blinkPeak = kind === 'soft' ? 0.56 + Math.random() * 0.16 : 0.93 + Math.random() * 0.07;
-  scheduleBlink(life);
-}
-
-function blinkProfile(life: LifeController): number {
-  if (!life.blinkKind) return 0;
-  const progress = (life.lifeTime - life.blinkStartedAt) / Math.max(0.001, life.blinkDuration);
-  if (progress >= 1) {
-    life.blinkKind = null;
-    life.blinkPeak = 0;
-    return 0;
-  }
-  return blinkEnvelope(life.blinkKind, progress) * life.blinkPeak;
-}
-
-function applyBlinkMorphs(
-  life: LifeController,
+function applyBone(
+  binding: BoneOffsetBinding | undefined,
+  offset: any,
   motion: MotionController,
-  value: number,
-  poseAdvanced: boolean,
 ): void {
-  const strength = state.lifeSettings.blinkStrength;
-  life.blinkTargets.forEach((target) => {
-    const influences = target.node.morphTargetInfluences as number[] | undefined;
-    if (!influences || target.index < 0 || target.index >= influences.length) return;
-    const current = Number(influences[target.index]) || 0;
-    const mixerOwnsMorph = poseAdvanced && motionControlsMorph(motion, target.name, target.index);
-    const observedBase = THREE.MathUtils.clamp(mixerOwnsMorph ? current : current - target.lastProcedural, 0, 1);
-    if (!life.blinkKind || target.lastProcedural === 0 || Math.abs(observedBase - target.baseValue) > 0.08) {
-      target.baseValue = observedBase;
-    }
-    const contribution = (1 - target.baseValue) * THREE.MathUtils.clamp(value * strength, 0, 1);
-    influences[target.index] = THREE.MathUtils.clamp(target.baseValue + contribution, 0, 1);
-    target.lastProcedural = contribution;
-    if (!life.blinkKind && value <= 0) {
-      influences[target.index] = target.baseValue;
-      target.lastProcedural = 0;
-    }
-  });
-}
-
-function chooseGazeTarget(life: LifeController, motion: MotionController): void {
-  const settings = state.lifeSettings;
-  const range = settings.gazeRange;
-  life.gazeStartYaw = life.gazeYaw;
-  life.gazeStartPitch = life.gazePitch;
-  life.gazeTargetYaw = (Math.random() * 2 - 1) * 0.25 * range;
-  life.gazeTargetPitch = (Math.random() * 2 - 1) * 0.14 * range;
-  life.gazeElapsed = 0;
-  const amplitudeRadians = Math.hypot(life.gazeTargetYaw - life.gazeStartYaw, life.gazeTargetPitch - life.gazeStartPitch);
-  const amplitudeDegrees = THREE.MathUtils.radToDeg(amplitudeRadians);
-  life.gazeDuration = Math.max(0.16, Math.min(0.52, 0.16 + amplitudeDegrees * 0.025));
-  const activity = Math.max(0.05, settings.gazeActivity);
-  const dwell = THREE.MathUtils.lerp(2.6, 0.65, settings.gazeDwell);
-  life.nextGazeAt = life.lifeTime + dwell * (0.6 + Math.random() * 1.1) / (0.55 + activity * 0.65);
-  if (amplitudeDegrees > 5 && Math.random() < settings.blinkOnGaze) triggerBlink(life, motion, Math.random() < 0.2 ? 'soft' : 'full');
-}
-
-function updateGaze(life: LifeController, motion: MotionController, delta: number): void {
-  const settings = state.lifeSettings;
-  if (settings.followPointer) {
-    const range = settings.gazeRange;
-    life.gazeTargetYaw = pointerX * 0.27 * range;
-    life.gazeTargetPitch = pointerY * 0.16 * range;
-    const response = 1 - Math.exp(-delta * 6);
-    life.gazeYaw += (life.gazeTargetYaw - life.gazeYaw) * response;
-    life.gazePitch += (life.gazeTargetPitch - life.gazePitch) * response;
-  } else {
-    if (life.lifeTime >= life.nextGazeAt) chooseGazeTarget(life, motion);
-    life.gazeElapsed += delta;
-    const progress = minimumJerk(life.gazeElapsed / Math.max(0.001, life.gazeDuration));
-    life.gazeYaw = THREE.MathUtils.lerp(life.gazeStartYaw, life.gazeTargetYaw, progress);
-    life.gazePitch = THREE.MathUtils.lerp(life.gazeStartPitch, life.gazeTargetPitch, progress);
-  }
-
-  if (life.lifeTime >= life.nextMicroAt) {
-    const amount = settings.microSaccade;
-    life.microTargetYaw = normalRandom() * 0.0032 * amount;
-    life.microTargetPitch = normalRandom() * 0.0022 * amount;
-    life.nextMicroAt = life.lifeTime + THREE.MathUtils.lerp(1.4, 0.24, amount) * (0.65 + Math.random() * 0.8);
-  }
-  const microResponse = 1 - Math.exp(-delta * 28);
-  life.microYaw += (life.microTargetYaw - life.microYaw) * microResponse;
-  life.microPitch += (life.microTargetPitch - life.microPitch) * microResponse;
-}
-
-function applyBoneOffset(binding: BoneOffsetBinding | undefined | null, offset: any, motion: MotionController): void {
   if (!binding) return;
-  if (!motionControlsBone(motion, binding.name)) {
+  if (!motionControlsBone(motion, binding.name))
     binding.bone.quaternion.multiply(binding.lastOffset.clone().invert());
-  }
   binding.bone.quaternion.multiply(offset).normalize();
   binding.lastOffset.copy(offset);
 }
-
-function applyFacialMorphs(
-  targets: LifeController['mouthTargets'],
+function applyPosition(
+  binding: PositionOffsetBinding | undefined,
+  offset: any,
   motion: MotionController,
-  value: number,
-  poseAdvanced: boolean,
 ): void {
-  targets.forEach((target) => {
-    const influences = target.node.morphTargetInfluences as number[] | undefined;
-    if (!influences || target.index < 0 || target.index >= influences.length) return;
-    const current = Number(influences[target.index]) || 0;
-    const mixerOwnsMorph = poseAdvanced && motionControlsMorph(motion, target.name, target.index);
-    const base = THREE.MathUtils.clamp(mixerOwnsMorph ? current : current - target.lastProcedural, 0, 1);
-    const contribution = (1 - base) * THREE.MathUtils.clamp(value, 0, 1);
-    influences[target.index] = THREE.MathUtils.clamp(base + contribution, 0, 1);
-    target.baseValue = base;
-    target.lastProcedural = contribution;
-  });
-}
-
-function updateFace(life: LifeController, motion: MotionController, delta: number, poseAdvanced: boolean): void {
-  const breathPhase = Math.max(0, Math.sin(life.lifeTime * state.lifeSettings.breathRate / 60 * Math.PI * 2 + life.phase));
-  const mouthTarget = 0.018 + breathPhase * 0.045;
-  life.mouthValue += (mouthTarget - life.mouthValue) * (1 - Math.exp(-delta * 4));
-  if (life.lifeTime >= life.nextExpressionAt) {
-    life.expressionValue = 0.045 + Math.random() * 0.09;
-    life.nextExpressionAt = life.lifeTime + 2.8 + Math.random() * 6;
-  }
-  life.expressionValue *= Math.exp(-delta * 0.38);
-  applyFacialMorphs(life.mouthTargets, motion, life.mouthValue, poseAdvanced);
-  applyFacialMorphs(life.expressionTargets, motion, life.expressionValue, poseAdvanced);
-  if (life.jaw) {
-    const jawOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(life.mouthValue * 0.055, 0, 0));
-    applyBoneOffset(life.jaw, jawOffset, motion);
-  }
-}
-
-function applyPositionOffset(binding: PositionOffsetBinding | undefined | null, offset: any, motion: MotionController): void {
   if (!binding) return;
-  if (!motionControlsBone(motion, binding.name)) binding.bone.position.sub(binding.lastOffset);
+  if (!motionControlsBone(motion, binding.name))
+    binding.bone.position.sub(binding.lastOffset);
   binding.bone.position.add(offset);
   binding.lastOffset.copy(offset);
 }
+function setTarget(
+  runtime: FootIkRuntime,
+  target: any,
+  _motion: MotionController,
+): void {
+  const binding = runtime.binding;
+  const parent = binding.bone.parent;
+  if (!parent) return;
+  parent.updateWorldMatrix(true, false);
+  const desiredLocal = parent.worldToLocal(target.clone()); // CCD may rewrite the controller as a side effect of solving the opposite leg. A contact anchor is absolute, so never re-add a stale local delta here.
+  binding.bone.position.copy(desiredLocal);
+  binding.lastOffset.set(0, 0, 0);
+}
+function restoreFootPose(
+  runtime: FootIkRuntime,
+  motion: MotionController,
+): void {
+  runtime.linkBases.forEach(({ bone, quaternion, name }) => {
+    if (!motionControlsBone(motion, name)) bone.quaternion.copy(quaternion);
+  });
+  runtime.linkBases = [];
+}
+function solveAnchoredFoot(runtime: FootIkRuntime): void {
+  const definition = runtime.solver.iks?.[0];
+  const links = definition?.links ?? [];
+  const bones =
+    runtime.solver.mesh?.skeleton?.bones ?? runtime.solver.bones ?? [];
+  runtime.linkBases = links.map((link: any) => {
+    const bone = bones[link.index];
+    return { bone, name: bone.name, quaternion: bone.quaternion.clone() };
+  });
+  runtime.solver.update();
+}
+function restoreD(mesh: any, side: "left" | "right"): void {
+  const prefix = side === "left" ? JP.left : JP.right;
+  [
+    `${prefix}${JP.foot}D`,
+    `${prefix}${JP.knee}D`,
+    `${prefix}${JP.ankle}D`,
+  ].forEach((name) => {
+    const bone = mesh.skeleton?.bones?.find(
+      (candidate: any) => candidate.name === name,
+    );
+    const base = bone?.userData?.lifeDBaseQuaternion;
+    if (bone && base) bone.quaternion.copy(base);
+  });
+}
+function syncD(
+  runtime: FootIkRuntime,
+  mesh: any,
+  side: "left" | "right",
+): void {
+  const prefix = side === "left" ? JP.left : JP.right;
+  [
+    [`${prefix}${JP.foot}`, `${prefix}${JP.foot}D`],
+    [`${prefix}${JP.knee}`, `${prefix}${JP.knee}D`],
+    [`${prefix}${JP.ankle}`, `${prefix}${JP.ankle}D`],
+  ].forEach(([sourceName, destName]) => {
+    const source = mesh.skeleton?.bones?.find(
+      (b: any) => b.name === sourceName,
+    );
+    const dest = mesh.skeleton?.bones?.find((b: any) => b.name === destName);
+    const sourceBase = runtime.linkBases.find(
+      (entry) => entry.name === sourceName,
+    )?.quaternion;
+    if (!source || !dest || !sourceBase) return;
+    const destBase =
+      dest.userData.lifeDBaseQuaternion ?? dest.quaternion.clone();
+    dest.userData.lifeDBaseQuaternion = destBase;
+    const delta = sourceBase.clone().invert().multiply(source.quaternion);
+    dest.quaternion.copy(destBase).multiply(delta).normalize();
+  });
+}
 
-function clearLegIk(chain: LegIkChain | undefined, motion: MotionController): void {
-  if (!chain) return;
-  if (!motionControlsBone(motion, chain.hip.name)) {
-    chain.hip.quaternion.multiply(chain.lastHipOffset.clone().invert()).normalize();
+function writeMorph(
+  targets: LifeController["blinkTargets"],
+  value: number,
+  motion: MotionController,
+  poseAdvanced: boolean,
+): void {
+  targets.forEach((target) => {
+    const influences = target.node.morphTargetInfluences as number[];
+    if (!influences) return;
+    const current = Number(influences[target.index]) || 0;
+    const mixer =
+      poseAdvanced && motionControlsMorph(motion, target.name, target.index);
+    const base = THREE.MathUtils.clamp(
+      mixer ? current : current - target.lastProcedural,
+      0,
+      1,
+    );
+    const add = (1 - base) * THREE.MathUtils.clamp(value, 0, 1);
+    influences[target.index] = THREE.MathUtils.clamp(base + add, 0, 1);
+    target.baseValue = base;
+    target.lastProcedural = add;
+  });
+}
+function blink(life: LifeController): number {
+  if (!life.blinkKind) return 0;
+  const p = (life.lifeTime - life.blinkStartedAt) / life.blinkDuration;
+  if (p >= 1) {
+    life.blinkKind = null;
+    return 0;
   }
-  if (!motionControlsBone(motion, chain.knee.name)) {
-    chain.knee.quaternion.multiply(chain.lastKneeOffset.clone().invert()).normalize();
+  return blinkEnvelope(life.blinkKind, p) * life.blinkPeak;
+}
+function startBlink(life: LifeController, kind?: BlinkKind): void {
+  if (!life.blinkTargets.length || life.blinkKind) return;
+  const r = Math.random();
+  const s = state.lifeSettings;
+  life.blinkKind =
+    kind ??
+    (r < s.doubleBlinkChance
+      ? "double"
+      : r < s.doubleBlinkChance + s.softBlinkChance
+        ? "soft"
+        : "full");
+  life.blinkStartedAt = life.lifeTime;
+  life.blinkDuration =
+    (life.blinkKind === "double" ? 0.38 : 0.18) *
+    THREE.MathUtils.lerp(0.78, 1.3, s.blinkDuration);
+  life.blinkPeak = life.blinkKind === "soft" ? 0.62 : 0.96;
+  life.nextBlinkAt = life.lifeTime + 1.4 + Math.random() * 4.8;
+}
+
+function gaze(life: LifeController, delta: number): void {
+  const s = state.lifeSettings;
+  if (s.followPointer) {
+    life.gazeTargetYaw = pointerX * 0.18 * s.gazeRange;
+    life.gazeTargetPitch = pointerY * 0.1 * s.gazeRange;
+  } else if (life.lifeTime >= life.nextGazeAt) {
+    life.gazeStartYaw = life.gazeYaw;
+    life.gazeStartPitch = life.gazePitch;
+    life.gazeTargetYaw = normal() * 0.065 * s.gazeRange;
+    life.gazeTargetPitch = normal() * 0.035 * s.gazeRange;
+    life.gazeElapsed = 0;
+    life.gazeDuration = 0.12 + Math.random() * 0.24;
+    life.nextGazeAt = life.lifeTime + 0.45 + Math.random() * 1.15;
   }
-  chain.lastHipOffset.identity();
-  chain.lastKneeOffset.identity();
-}
-
-function rotateBoneToward(bone: any, end: any, target: any): void {
-  bone.updateWorldMatrix(true, false);
-  end.updateWorldMatrix(true, false);
-  const origin = bone.getWorldPosition(new THREE.Vector3());
-  const current = end.getWorldPosition(new THREE.Vector3()).sub(origin);
-  const desired = target.clone().sub(origin);
-  if (current.lengthSq() < 1e-8 || desired.lengthSq() < 1e-8) return;
-  const worldDelta = new THREE.Quaternion().setFromUnitVectors(current.normalize(), desired.normalize());
-  const parentWorld = bone.parent?.getWorldQuaternion?.(new THREE.Quaternion()) ?? new THREE.Quaternion();
-  const localDelta = parentWorld.clone().invert().multiply(worldDelta).multiply(parentWorld);
-  bone.quaternion.premultiply(localDelta).normalize();
-  bone.updateWorldMatrix(true, false);
-}
-
-function solveLegIk(chain: LegIkChain | undefined, target: any, motion: MotionController): void {
-  if (!chain) return;
-  clearLegIk(chain, motion);
-  const hipBase = chain.hip.quaternion.clone();
-  const kneeBase = chain.knee.quaternion.clone();
-  // CCD retains each rig's existing knee-bend direction, avoiding a forced
-  // global axis and allowing this fallback to work on renamed PMX skeletons.
-  for (let iteration = 0; iteration < 6; iteration += 1) {
-    rotateBoneToward(chain.knee, chain.ankle, target);
-    rotateBoneToward(chain.hip, chain.ankle, target);
-    if (chain.ankle.getWorldPosition(new THREE.Vector3()).distanceTo(target) < 0.002) break;
+  life.gazeElapsed += delta;
+  const t = minimumJerk(life.gazeElapsed / Math.max(0.001, life.gazeDuration));
+  life.gazeYaw = THREE.MathUtils.lerp(life.gazeStartYaw, life.gazeTargetYaw, t);
+  life.gazePitch = THREE.MathUtils.lerp(
+    life.gazeStartPitch,
+    life.gazeTargetPitch,
+    t,
+  );
+  if (life.lifeTime >= life.nextMicroAt) {
+    life.microTargetYaw = normal() * 0.0038 * s.microSaccade;
+    life.microTargetPitch = normal() * 0.0018 * s.microSaccade;
+    life.nextMicroAt = life.lifeTime + 0.28 + Math.random() * 0.72;
   }
-  chain.lastHipOffset.copy(hipBase.clone().invert().multiply(chain.hip.quaternion));
-  chain.lastKneeOffset.copy(kneeBase.clone().invert().multiply(chain.knee.quaternion));
+  const a = 1 - Math.exp(-delta * 36);
+  life.microYaw += (life.microTargetYaw - life.microYaw) * a;
+  life.microPitch += (life.microTargetPitch - life.microPitch) * a;
 }
 
-function syncLegDeformBones(mesh: any, side: 'left' | 'right'): void {
-  const prefix = side === 'left' ? '左' : '右';
-  const copy = (sourceName: string, destinationName: string) => {
-    const source = mesh.skeleton?.bones?.find((bone: any) => bone.name === sourceName);
-    const destination = mesh.skeleton?.bones?.find((bone: any) => bone.name === destinationName);
-    if (!source || !destination?.parent) return;
-    const position = source.getWorldPosition(new THREE.Vector3());
-    const quaternion = source.getWorldQuaternion(new THREE.Quaternion());
-    destination.position.copy(destination.parent.worldToLocal(position));
-    destination.quaternion.copy(destination.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(quaternion));
-    destination.updateWorldMatrix(true, true);
-  };
-  copy(`${prefix}足`, `${prefix}足D`);
-  copy(`${prefix}ひざ`, `${prefix}ひざD`);
-  copy(`${prefix}足首`, `${prefix}足首D`);
+function posture(life: LifeController, motion: MotionController): void {
+  // PMX models do not share a reliable local spine axis. Until the model-specific pose-preserving solver validates that axis, never rotate the torso procedurally: a small generic pitch is enough to create a visible shrimp-back. Keep every trunk/shoulder binding at its motion pose.
+  [
+    life.body.center,
+    life.body.hips,
+    life.body.spineLower,
+    life.body.spineUpper,
+    life.body.shoulderLeft,
+    life.body.shoulderRight,
+    life.body.neck,
+    life.body.head,
+  ].forEach((b) => applyBone(b, IDENTITY, motion));
 }
 
-function clearBoneOffsets(life: LifeController, motion: MotionController): void {
-  life.eyes.forEach((binding) => applyBoneOffset(binding, IDENTITY, motion));
-  applyBoneOffset(life.jaw, IDENTITY, motion);
-  BODY_REGIONS.forEach((region) => applyBoneOffset(life.body[region], IDENTITY, motion));
-  applyPositionOffset(life.centerPosition, new THREE.Vector3(), motion);
-  applyPositionOffset(life.leftFoot, new THREE.Vector3(), motion);
-  applyPositionOffset(life.rightFoot, new THREE.Vector3(), motion);
-  clearLegIk(life.leftLegIk, motion);
-  clearLegIk(life.rightLegIk, motion);
-}
-
-function regionOffset(life: LifeController, region: BodyRegion, delta: number): any {
-  const settings = state.lifeSettings;
-  const segment = settings.segments[region] * settings.sway;
-  if (segment <= 0) return IDENTITY;
-  const speed = THREE.MathUtils.lerp(0.16, 0.82, settings.swaySpeed);
-  const index = BODY_REGIONS.indexOf(region);
-  const phase = life.phase + index * 0.91;
-  const noiseResponse = 1 - Math.exp(-delta * (0.45 + settings.swayIrregularity * 1.8));
-  const noiseTarget = normalRandom() * 0.009 * settings.swayIrregularity;
-  life.swayNoise[region] = THREE.MathUtils.lerp(life.swayNoise[region] ?? 0, noiseTarget, noiseResponse);
-  const noise = life.swayNoise[region] ?? 0;
-  // Do not drive the whole body from repeating sine waves. Those are easy to
-  // spot when viewing closely and make an otherwise idle character feel like
-  // a looping robot. The very small cyclic component only prevents a dead
-  // stop; the visible variation comes from the slowly filtered random target.
-  const slow = Math.sin(life.lifeTime * speed + phase);
-  const secondary = Math.sin(life.lifeTime * speed * 0.47 + phase * 1.73);
-  const yaw = (slow * 0.004 + secondary * 0.002 + noise * 2.1) * segment;
-  const pitch = (secondary * 0.003 + noise * 1.35) * segment;
-  const roll = (Math.sin(life.lifeTime * speed * 0.71 + phase * 0.63) * 0.003 - noise * 1.1) * segment;
-
-  switch (region) {
-    case 'center': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.35, yaw * 0.32, roll * 0.25));
-    case 'hips': return new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch * 0.7, -yaw * 0.55, roll * 0.75));
-    case 'spineLower': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.8, yaw * 0.65, roll * 0.7));
-    case 'spineUpper': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw * 0.82, roll));
-    case 'shoulderLeft': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.15, yaw * 0.1, -roll * 0.8));
-    case 'shoulderRight': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.15, yaw * 0.1, roll * 0.8));
-    case 'neck': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.45, yaw * 0.5, roll * 0.35));
-    case 'head': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.3, yaw * 0.38, roll * 0.32));
-  }
-}
-
-function updatePostureInertia(life: LifeController, delta: number): void {
-  const settings = state.lifeSettings;
-  const anchor = life.body.hips?.bone ?? life.body.center?.bone ?? life.body.spineLower?.bone;
-  if (!anchor || delta <= 0) return;
-  const position = anchor.getWorldPosition(new THREE.Vector3());
-  const velocity = position.clone().sub(life.anchorPosition).multiplyScalar(1 / Math.max(0.001, delta));
-  const acceleration = velocity.clone().sub(life.anchorVelocity).multiplyScalar(1 / Math.max(0.001, delta));
-  life.anchorPosition.copy(position);
-  life.anchorVelocity.lerp(velocity, 1 - Math.exp(-delta * 9));
-  const response = settings.inertiaResponse;
-  const targetPitch = THREE.MathUtils.clamp(-acceleration.z * 0.0026 * response, -0.035, 0.035);
-  const targetRoll = THREE.MathUtils.clamp(acceleration.x * 0.0022 * response, -0.028, 0.028);
-  const follow = 1 - Math.exp(-delta * THREE.MathUtils.lerp(3, 14, settings.postureRecovery));
-  life.posturePitch += (targetPitch - life.posturePitch) * follow;
-  life.postureRoll += (targetRoll - life.postureRoll) * follow;
-}
-
-function updateFootPlacement(life: LifeController, motion: MotionController): void {
-  const settings = state.lifeSettings;
-  const zero = new THREE.Vector3();
-  const legLength = Math.max(life.leftLegIk?.legLength ?? 0, life.rightLegIk?.legLength ?? 0, 0.7);
-  // Micro life motion must not suppress a standing replant. Only a real
-  // playing translation is treated as locomotion, and explicit tests win.
-  const moving = state.playing && life.anchorVelocity.length() > legLength * 0.8;
-  // Start from the animation pose each frame. The procedural solve is an
-  // offset, so it never accumulates knee rotations across frames.
-  clearLegIk(life.leftLegIk, motion);
-  clearLegIk(life.rightLegIk, motion);
-  const leftPosition = life.leftLegIk?.ankle.getWorldPosition?.(new THREE.Vector3())
-    ?? life.leftFoot?.bone.getWorldPosition?.(new THREE.Vector3());
-  const rightPosition = life.rightLegIk?.ankle.getWorldPosition?.(new THREE.Vector3())
-    ?? life.rightFoot?.bone.getWorldPosition?.(new THREE.Vector3());
-  const upper = life.body.spineUpper?.bone ?? life.body.spineLower?.bone;
-  const upperQuaternion = upper?.getWorldQuaternion?.(new THREE.Quaternion());
-  const upperUp = upperQuaternion ? new THREE.Vector3(0, 1, 0).applyQuaternion(upperQuaternion) : null;
-  const supportCenter = leftPosition && rightPosition ? leftPosition.clone().add(rightPosition).multiplyScalar(0.5) : null;
-  const supportWidth = leftPosition && rightPosition ? Math.max(0.12, Math.abs(leftPosition.x - rightPosition.x)) : 0.42;
-  const lateralLean = supportCenter ? life.anchorPosition.x - supportCenter.x : 0;
-  const rollLean = upperUp ? Math.asin(THREE.MathUtils.clamp(upperUp.x, -1, 1)) : 0;
-  const offBalance = Math.abs(lateralLean) > supportWidth * 0.18 || Math.abs(rollLean) > 0.13;
-  const correctionSide: 'left' | 'right' = lateralLean + rollLean * supportWidth > 0 ? 'right' : 'left';
-  if (!settings.footReplant || (moving && !life.forceFootStep)) {
-    life.footStepSide = null;
-    life.nextFootStepAt = Math.max(life.nextFootStepAt, life.lifeTime + 1.6);
-    applyPositionOffset(life.centerPosition, zero, motion);
-    applyPositionOffset(life.leftFoot, zero, motion);
-    applyPositionOffset(life.rightFoot, zero, motion);
-    return;
-  }
-
-  // Idle stepping on a timer reads as a looped robot animation. A replant is
-  // corrective: it happens only after a visible balance loss (or the test).
-  if (!life.footStepSide && (life.forceFootStep || offBalance)) {
-    life.footStepSide = offBalance ? correctionSide : Math.random() < 0.5 ? 'left' : 'right';
+function stance(life: LifeController, motion: MotionController): void {
+  const left = life.leftFootIk;
+  const right = life.rightFootIk;
+  if (!left || !right || !state.lifeSettings.footReplant) return;
+  restoreFootPose(left, motion);
+  restoreFootPose(right, motion);
+  restoreD(life.mesh, "left");
+  restoreD(life.mesh, "right");
+  life.mesh.updateWorldMatrix(true, true);
+  const lc = left.plantedTarget
+    .clone()
+    .setY(left.floorHeight + left.contactOffset);
+  const rc = right.plantedTarget
+    .clone()
+    .setY(right.floorHeight + right.contactOffset);
+  let leftGoal = lc.clone();
+  let rightGoal = rc.clone();
+  const mid = lc.clone().add(rc).multiplyScalar(0.5);
+  const width = Math.max(0.12, Math.abs(lc.x - rc.x));
+  const pelvis = life.body.hips?.bone ?? life.body.center?.bone;
+  const com = pelvis?.getWorldPosition(new THREE.Vector3()) ?? mid.clone();
+  com.x += life.balanceTestOffsetX;
+  const lateral = com.x - mid.x;
+  if (
+    !life.footStepSide &&
+    (life.forceFootStep || Math.abs(lateral) > width * 0.18)
+  ) {
+    life.footStepSide = lateral >= 0 ? "right" : "left";
     life.footStepStartedAt = life.lifeTime;
   }
-  const cycle = life.footStepSide ? (life.lifeTime - life.footStepStartedAt) / 0.72 : 0;
-  const progress = THREE.MathUtils.clamp(cycle, 0, 1);
-  const stepScale = life.footStepScale;
-  const lift = Math.sin(Math.PI * progress) * legLength * 0.1 * settings.footReplant * stepScale;
-  const travel = Math.sin(Math.PI * progress) * legLength * 0.075 * settings.footReplant * stepScale;
-  const side = life.footStepSide === 'left' ? -1 : 1;
-  const supportShift = life.footStepSide ? -side * Math.sin(Math.PI * progress) * legLength * 0.06 * settings.weightShift * stepScale : 0;
-  const footOffset = new THREE.Vector3(side * travel * 0.35, lift, travel);
-  applyPositionOffset(life.centerPosition, new THREE.Vector3(supportShift, 0, 0), motion);
-  const leftStepping = life.footStepSide === 'left';
-  const rightStepping = life.footStepSide === 'right';
-  // Prefer the real thigh/knee/ankle chain. The old MMD controller remains a
-  // fallback for non-humanoid rigs where a complete chain cannot be found.
-  if (leftStepping && life.leftFootIk) {
-    applyPositionOffset(life.leftFootIk.binding, footOffset, motion);
-    life.leftFootIk.solver.update();
-    syncLegDeformBones(life.mesh, 'left');
-  } else if (leftStepping && life.leftLegIk) {
-    const target = life.leftLegIk.ankle.getWorldPosition(new THREE.Vector3());
-    target.x += footOffset.x;
-    target.z += footOffset.z;
-    target.y = Math.min(target.y, life.leftLegIk.floorHeight) + footOffset.y;
-    solveLegIk(life.leftLegIk, target, motion);
-    applyPositionOffset(life.leftFoot, zero, motion);
+  // COM correction is lateral only.  Giving a static standing rig an invented
+  // forward target or translating the center bone makes its upper chain solve
+  // as a backward arch (the former "limbo" pose).
+  if (!life.footStepSide) {
+    setTarget(left, lc, motion);
+    setTarget(right, rc, motion);
+    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
   } else {
-    applyPositionOffset(life.leftFoot, leftStepping ? footOffset : zero, motion);
+    const p = THREE.MathUtils.clamp(
+      (life.lifeTime - life.footStepStartedAt) / 0.82,
+      0,
+      1,
+    );
+    const e = minimumJerk(p);
+    const swing = life.footStepSide === "left" ? left : right;
+    const planted = life.footStepSide === "left" ? right : left;
+    const start = swing.plantedTarget
+      .clone()
+      .setY(swing.floorHeight + swing.contactOffset);
+    const end = swing.plantedTarget
+      .clone()
+      .setY(swing.floorHeight + swing.contactOffset);
+    // The support correction chooses the foot; it must not pull the swing
+    // controller through the other leg. Keep this corrective first step
+    // vertical and let a later planted step establish lateral spacing.
+    const target = start.lerp(end, e);
+    target.y += Math.sin(Math.PI * e) * 0.14;
+    const plantedGoal = planted.plantedTarget
+      .clone()
+      .setY(planted.floorHeight + planted.contactOffset);
+    if (life.footStepSide === "left") {
+      leftGoal = target;
+      rightGoal = plantedGoal;
+    } else {
+      rightGoal = target;
+      leftGoal = plantedGoal;
+    }
+    setTarget(swing, target, motion);
+    setTarget(planted, plantedGoal, motion);
+    applyPosition(life.centerPosition, new THREE.Vector3(), motion);
+    if (p >= 1) {
+      swing.plantedTarget.copy(end).setY(swing.restTarget.y);
+      life.footStepSide = null;
+      life.forceFootStep = false;
+      life.footStepScale = 1;
+      life.balanceTestOffsetX = 0;
+    }
   }
-  if (rightStepping && life.rightFootIk) {
-    applyPositionOffset(life.rightFootIk.binding, footOffset, motion);
-    life.rightFootIk.solver.update();
-    syncLegDeformBones(life.mesh, 'right');
-  } else if (rightStepping && life.rightLegIk) {
-    const target = life.rightLegIk.ankle.getWorldPosition(new THREE.Vector3());
-    target.x += footOffset.x;
-    target.z += footOffset.z;
-    target.y = Math.min(target.y, life.rightLegIk.floorHeight) + footOffset.y;
-    solveLegIk(life.rightLegIk, target, motion);
-    applyPositionOffset(life.rightFoot, zero, motion);
-  } else {
-    applyPositionOffset(life.rightFoot, rightStepping ? footOffset : zero, motion);
-  }
-
-  if (progress >= 1) {
-    life.footStepSide = null;
-    life.footStepScale = 1;
-    life.forceFootStep = false;
-    life.nextFootStepAt = life.lifeTime + THREE.MathUtils.lerp(3.5, 8.5, Math.random());
-  }
+  life.mesh.updateWorldMatrix(true, true);
+  setTarget(left, leftGoal, motion);
+  setTarget(right, rightGoal, motion);
+  // Solve only the two explicit PMX foot chains.  Running the global PMX
+  // animation helper here also applies unrelated grants and deforms a held
+  // pose.  Keeping the solver local makes the life layer additive and lets us
+  // preserve the incoming motion pose on every frame.
+  solveAnchoredFoot(left);
+  syncD(left, life.mesh, "left");
+  solveAnchoredFoot(right);
+  syncD(right, life.mesh, "right");
+  life.mesh.skeleton?.update?.();
+  life.mesh.updateWorldMatrix(true, true);
 }
 
 export function updateLife(
@@ -656,61 +564,73 @@ export function updateLife(
   delta: number,
   poseAdvanced = true,
 ): void {
-  const settings = state.lifeSettings;
   life.lifeTime += delta;
-
-  if (life.breathAction) {
-    const variation = 1 + Math.sin(life.lifeTime * 0.11 + life.phase) * settings.breathVariation * 0.16;
-    life.breathAction.enabled = true;
-    life.breathAction.setEffectiveWeight(settings.enabled ? settings.breathDepth : 0);
-    life.breathAction.setEffectiveTimeScale(Math.max(0.05, settings.breathRate / 60 * variation));
-  }
-
-  if (!settings.enabled) {
-    life.blinkKind = null;
-    applyBlinkMorphs(life, motion, 0, poseAdvanced);
-    applyFacialMorphs(life.mouthTargets, motion, 0, poseAdvanced);
-    applyFacialMorphs(life.expressionTargets, motion, 0, poseAdvanced);
-    clearBoneOffsets(life, motion);
+  if (!state.lifeSettings.enabled) {
+    writeMorph(life.blinkTargets, 0, motion, poseAdvanced);
+    writeMorph(life.mouthTargets, 0, motion, poseAdvanced);
+    writeMorph(life.expressionTargets, 0, motion, poseAdvanced);
+    life.eyes.forEach((b) => applyBone(b, IDENTITY, motion));
     return;
   }
-
-  if (life.lifeTime >= life.nextBlinkAt) triggerBlink(life, motion);
-  applyBlinkMorphs(life, motion, blinkProfile(life), poseAdvanced);
-  updateFace(life, motion, delta, poseAdvanced);
-  // Life remains active while the timeline is paused. The mixer is not
-  // advancing in that case, but gaze, micro-saccades and stance still need to
-  // make a held pose feel alive.
-  updateGaze(life, motion, delta);
-  const eyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    THREE.MathUtils.clamp(life.gazePitch + life.microPitch, -0.07, 0.07),
-    THREE.MathUtils.clamp(life.gazeYaw + life.microYaw, -0.1, 0.1),
+  if (life.lifeTime >= life.nextBlinkAt) startBlink(life);
+  writeMorph(
+    life.blinkTargets,
+    blink(life) * state.lifeSettings.blinkStrength,
+    motion,
+    poseAdvanced,
+  );
+  gaze(life, delta);
+  const eye = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      THREE.MathUtils.clamp(life.gazePitch + life.microPitch, -0.06, 0.06),
+      THREE.MathUtils.clamp(life.gazeYaw + life.microYaw, -0.13, 0.13),
+      0,
+    ),
+  );
+  life.eyes.forEach((b) => applyBone(b, eye, motion));
+  const breath = Math.max(
     0,
-  ));
-  life.eyes.forEach((binding) => applyBoneOffset(binding, eyeOffset, motion));
-  // Rebuilt life layer: do not write to head, neck, hips or feet until the
-  // model-specific IK validation has passed.  The previous broad procedural
-  // offsets fought PMX parent chains and were the source of the twisted neck.
-  BODY_REGIONS.forEach((region) => applyBoneOffset(life.body[region], IDENTITY, motion));
-  applyPositionOffset(life.centerPosition, new THREE.Vector3(), motion);
-  applyPositionOffset(life.leftFoot, new THREE.Vector3(), motion);
-  applyPositionOffset(life.rightFoot, new THREE.Vector3(), motion);
-  clearLegIk(life.leftLegIk, motion);
-  clearLegIk(life.rightLegIk, motion);
-  updateFootPlacement(life, motion);
+    Math.sin(
+      ((life.lifeTime * state.lifeSettings.breathRate) / 60) * Math.PI * 2 +
+        life.phase,
+    ),
+  );
+  life.mouthValue +=
+    (0.008 + breath * 0.025 - life.mouthValue) * (1 - Math.exp(-delta * 4));
+  writeMorph(life.mouthTargets, life.mouthValue, motion, poseAdvanced);
+  if (life.lifeTime >= life.nextExpressionAt) {
+    life.expressionValue = 0.035 + Math.random() * 0.06;
+    life.nextExpressionAt = life.lifeTime + 3 + Math.random() * 5;
+  }
+  life.expressionValue *= Math.exp(-delta * 0.42);
+  writeMorph(
+    life.expressionTargets,
+    life.expressionValue,
+    motion,
+    poseAdvanced,
+  );
+  applyBone(
+    life.jaw,
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(life.mouthValue * 0.045, 0, 0),
+    ),
+    motion,
+  );
+  posture(life, motion);
+  stance(life, motion);
 }
-
-export function forceBlink(life: LifeController, motion: MotionController, kind: BlinkKind = 'full'): void {
-  triggerBlink(life, motion, kind);
+export function forceBlink(
+  life: LifeController,
+  _motion: MotionController,
+  kind: BlinkKind = "full",
+): void {
+  startBlink(life, kind);
 }
-
 export function forceFootReplant(life: LifeController): void {
   life.footStepSide = null;
-  life.footStepScale = 2.2;
   life.forceFootStep = true;
-  life.nextFootStepAt = life.lifeTime;
+  life.footStepScale = 1.6;
 }
-
 export function blinkMorphNames(life: LifeController): string[] {
   return [...new Set(life.blinkTargets.map((target) => target.name))];
 }
