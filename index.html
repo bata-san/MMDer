@@ -1,12 +1,145 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title></title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/client.ts"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b0e14" />
+  <title>MMD LAB — realtime viewer</title>
+  <link rel="stylesheet" href="./style.css?v=ui-refresh-1" />
+</head>
+<body>
+  <input class="dock-toggle" id="library-toggle" type="checkbox" />
+  <input class="dock-toggle" id="inspector-toggle" type="checkbox" />
+
+  <canvas id="scene"></canvas>
+  <div id="dropzone" class="dropzone"><div><strong>ここにドロップ</strong><span>PMX / PMD / VMD / VPD / ZIP / フォルダ</span></div></div>
+
+  <header class="app-bar">
+    <a class="brand" href="#" aria-label="ワークスペース"><i aria-hidden="true"></i><span>WORKSPACE</span><small>LOCAL</small></a>
+    <div class="status"><span class="local-badge">LOCAL</span><span id="fps">-- FPS</span><span id="model-count">0 models</span></div>
+    <div id="notion-kit-toolbar" aria-label="クイック操作"></div>
+    <div class="mobile-dock-actions"><label for="library-toggle" title="ライブラリを開く">ASSETS</label><label for="inspector-toggle" title="設定を開く">CONTROLS</label></div>
+  </header>
+
+  <main>
+    <aside class="panel left" aria-label="アセットとシーン">
+      <div class="panel-heading"><div><p class="eyebrow">WORKSPACE</p><h1>アセット</h1></div><label class="panel-close" for="library-toggle" aria-label="閉じる">×</label></div>
+
+      <section class="load-actions">
+        <button class="primary" id="open-models">＋ モデル</button>
+        <button id="open-motions">＋ モーション</button>
+        <button class="compact-action" id="open-folder" title="関連テクスチャを含むフォルダを追加">フォルダ</button>
+        <input id="models-file" type="file" multiple accept=".pmx,.pmd,.zip" hidden />
+        <input id="motions-file" type="file" multiple accept=".vmd,.vpd" hidden />
+        <input id="folder" type="file" webkitdirectory multiple hidden />
+      </section>
+
+      <section class="scene-model-section">
+        <div class="section-title"><span>シーン <small id="selected-count">0 selected</small></span><button class="icon danger" id="clear-models" title="すべて削除">CLEAR</button></div>
+        <div class="model-toolbar"><button id="select-all-models">全選択</button><button id="clear-selection">解除</button><button id="arrange-models">整列</button></div>
+        <div id="models" class="asset-list scene-list"><div class="empty">モデルを読み込むと<br />ここに表示されます</div></div>
+      </section>
+
+      <div class="library-drawers">
+        <details class="drawer" open><summary><span>保存済みモデル</span><b id="model-library-count">0</b></summary><div id="model-library" class="asset-list"><div class="empty">保存済みモデルはありません</div></div></details>
+        <details class="drawer"><summary><span>保存済みモーション</span><b id="motion-library-count">0</b></summary><div id="motion-library" class="asset-list"><div class="empty">保存済みモーションはありません</div></div></details>
+      </div>
+    </aside>
+
+    <div class="viewport-space" aria-hidden="true"><div class="viewport-hint">中ドラッグで回転 · Shift＋中ドラッグで移動 · ホイールでズーム</div></div>
+
+    <aside class="panel right" aria-label="モデル設定">
+      <div class="inspector-heading"><div><p class="eyebrow">INSPECTOR</p><strong>モデル設定</strong></div><label class="panel-close" for="inspector-toggle" aria-label="閉じる">×</label></div>
+      <div id="notion-kit-tabs"></div>
+      <div class="tabs" role="tablist" aria-label="設定カテゴリー">
+        <button class="active" data-tab="motion">再生</button><button data-tab="life">生命感</button><button data-tab="dynamics">物理</button><button data-tab="morph">表情</button><button data-tab="look">表示</button>
+      </div>
+
+      <div class="tab-content active" id="motion-tab">
+        <section class="control-card transport-card">
+          <div class="section-title"><span>モーション</span><output id="timecode">00:00.0</output></div>
+          <div class="transport"><button id="play" class="play" aria-label="再生・一時停止">❚❚</button><input id="timeline" type="range" min="0" max="1" step="0.001" value="0" /><button id="loop" class="toggle active" title="ループ">↻</button></div>
+          <div class="field-row"><label for="motion-scope">適用先</label><select id="motion-scope"><option value="active">アクティブ</option><option value="selected" selected>選択モデル</option><option value="all">すべて</option></select></div>
+        </section>
+        <section class="control-card"><div class="section-title"><span>クイック操作</span></div><div class="button-row"><button id="restart-motion">最初から</button><button id="sync-motion">時間を同期</button></div><p class="muted">標準待機モーションはモデル読み込み時に自動適用されます。</p></section>
+        <details class="advanced-block"><summary>切り替えとループの詳細</summary><div class="advanced-body"><label>モーション切替 <output id="motion-blend-value">0.22s</output></label><input id="motion-blend" type="range" min=".04" max=".8" step=".01" value=".22" /><label>ループ継ぎ目 <output id="loop-blend-value">0.38s</output></label><input id="loop-blend" type="range" min="0" max=".8" step=".01" value=".38" /></div></details>
+      </div>
+
+      <div class="tab-content" id="life-tab">
+        <section class="control-card feature-card"><div class="section-title"><span>自然な動き</span><label class="switch"><input id="life-enabled" type="checkbox" checked /><i></i></label></div><div class="preset-grid"><button data-life-preset="calm">落ち着き</button><button class="active-preset" data-life-preset="natural">自然</button><button data-life-preset="alert">活発</button></div></section>
+        <section class="control-card">
+          <div class="section-title"><span>主要調整</span><button id="test-blink" class="text-button">瞬きテスト</button></div>
+          <div class="control-grid">
+            <div class="parameter-row"><label>瞬きの強さ <output id="blink-strength-value">0.94</output></label><input id="blink-strength" type="range" min="0" max="1" step=".01" value=".94" /></div>
+            <div class="parameter-row"><label>視線の範囲 <output id="gaze-range-value">0.42</output></label><input id="gaze-range" type="range" min="0" max="1" step=".01" value=".42" /></div>
+            <div class="parameter-row"><label>頭の追従 <output id="head-follow-value">0.24</output></label><input id="head-follow" type="range" min="0" max="1" step=".01" value=".24" /></div>
+            <div class="parameter-row"><label>呼吸の深さ <output id="breath-depth-value">0.24</output></label><input id="breath-depth" type="range" min="0" max="1" step=".01" value=".24" /></div>
+            <div class="parameter-row wide"><label>姿勢の揺れ <output id="sway-value">0.22</output></label><input id="sway" type="range" min="0" max="1" step=".01" value=".22" /></div>
+          </div>
+          <label class="check"><input id="follow-pointer" type="checkbox" /> ポインターを見る</label>
+        </section>
+        <details class="advanced-block"><summary>瞬きと視線の詳細</summary><div class="advanced-body">
+          <p id="blink-morph-status" class="muted">モデルを選択すると、使用する瞬きモーフを表示します。</p>
+          <label>瞬き頻度 <output id="blink-activity-value">0.52</output></label><input id="blink-activity" type="range" min="0" max="1" step=".01" value=".52" />
+          <label>瞬き速度 <output id="blink-duration-value">1.00</output></label><input id="blink-duration" type="range" min="0" max="1" step=".01" value="1" />
+          <label>浅い瞬き <output id="soft-blink-value">0.22</output></label><input id="soft-blink" type="range" min="0" max=".6" step=".01" value=".22" />
+          <label>二度瞬き <output id="double-blink-value">0.12</output></label><input id="double-blink" type="range" min="0" max=".5" step=".01" value=".12" />
+          <label>視線移動時の瞬き <output id="blink-on-gaze-value">0.35</output></label><input id="blink-on-gaze" type="range" min="0" max="1" step=".01" value=".35" />
+          <label>視線の動き <output id="gaze-activity-value">0.48</output></label><input id="gaze-activity" type="range" min="0" max="1" step=".01" value=".48" />
+          <label>視線の滞留 <output id="gaze-dwell-value">0.55</output></label><input id="gaze-dwell" type="range" min="0" max="1" step=".01" value=".55" />
+          <label>眼球の微動 <output id="micro-saccade-value">0.26</output></label><input id="micro-saccade" type="range" min="0" max="1" step=".01" value=".26" />
+        </div></details>
+        <details class="advanced-block"><summary>呼吸と姿勢の詳細</summary><div class="advanced-body">
+          <label>呼吸数 <output id="breath-rate-value">14 bpm</output></label><input id="breath-rate" type="range" min="6" max="28" step=".5" value="14" />
+          <label>呼吸の変化 <output id="breath-variation-value">0.16</output></label><input id="breath-variation" type="range" min="0" max="1" step=".01" value=".16" />
+          <label>揺れの速さ <output id="sway-speed-value">0.44</output></label><input id="sway-speed" type="range" min="0" max="1" step=".01" value=".44" />
+          <label>不規則さ <output id="sway-irregularity-value">0.32</output></label><input id="sway-irregularity" type="range" min="0" max="1" step=".01" value=".32" />
+          <div id="sway-regions" class="region-list"></div>
+        </div></details>
+      </div>
+
+      <div class="tab-content" id="dynamics-tab">
+        <section class="control-card feature-card">
+          <div class="section-title"><span>物理演算</span><label class="switch"><input id="physics" type="checkbox" /><i></i></label></div>
+          <div class="button-row single-side"><button id="physics-reset">状態をリセット</button></div>
+          <label>品質 <output id="physics-quality-value">HIGH</output></label><input id="physics-quality" type="range" min="1" max="4" step="1" value="3" />
+          <div class="control-grid compact-grid"><div class="parameter-row"><label>硬さ <output id="stiffness-value">0.62</output></label><input id="stiffness" type="range" min="0" max="1" step=".01" value=".62" /></div><div class="parameter-row"><label>減衰 <output id="damping-value">0.18</output></label><input id="damping" type="range" min="0" max="1" step=".01" value=".18" /></div></div>
+        </section>
+        <section class="control-card"><div class="section-title"><span>直接操作</span></div><div class="field-row"><label for="interaction-mode">ポインター</label><select id="interaction-mode"><option value="select">選択</option><option value="move">モデル移動</option><option value="poke">物理を押す</option><option value="pull">物理を引く</option></select></div><label class="check"><input id="ground-lock" type="checkbox" checked /> モデル移動を床面に固定</label></section>
+        <details class="advanced-block"><summary>操作感度</summary><div class="advanced-body">
+          <label>移動の追従 <output id="drag-response-value">0.72</output></label><input id="drag-response" type="range" min="0" max="1" step=".01" value=".72" />
+          <label>押す強さ <output id="poke-strength-value">1.20</output></label><input id="poke-strength" type="range" min=".1" max="5" step=".1" value="1.2" />
+          <label>押す範囲 <output id="poke-radius-value">0.85</output></label><input id="poke-radius" type="range" min=".2" max="2" step=".05" value=".85" />
+          <label>引く強さ <output id="pull-strength-value">18.0</output></label><input id="pull-strength" type="range" min="2" max="50" step="1" value="18" />
+          <label>引く減衰 <output id="pull-damping-value">3.5</output></label><input id="pull-damping" type="range" min="0" max="12" step=".5" value="3.5" />
+          <label>引く範囲 <output id="pull-radius-value">1.20</output></label><input id="pull-radius" type="range" min=".2" max="2.5" step=".05" value="1.2" />
+        </div></details>
+        <details class="advanced-block"><summary>環境と部位別設定</summary><div class="advanced-body">
+          <label>空気抵抗 <output id="air-value">0.28</output></label><input id="air" type="range" min="0" max="1" step=".01" value=".28" />
+          <label>重力 <output id="gravity-value">1.00</output></label><input id="gravity" type="range" min="0" max="2" step=".05" value="1" />
+          <label>風 <output id="wind-value">0.00</output></label><input id="wind" type="range" min="0" max="30" step=".5" value="0" />
+          <label>乱流 <output id="turbulence-value">0.00</output></label><input id="turbulence" type="range" min="0" max="1" step=".01" value="0" />
+          <div id="physics-parts" class="region-list"></div>
+        </div></details>
+      </div>
+
+      <div class="tab-content" id="morph-tab"><section class="control-card morph-card"><div class="section-title"><span>表情・モーフ</span><button id="reset-morph" class="text-button">すべて戻す</button></div><div id="morphs" class="morph-list"><div class="empty">モデルを選択すると<br />モーフが表示されます</div></div></section></div>
+
+      <div class="tab-content" id="look-tab">
+        <section class="control-card"><div class="section-title"><span>カメラ</span></div><div class="preset-grid camera-grid"><button data-camera="front">正面</button><button data-camera="threequarter">斜め</button><button data-camera="wide">全体</button></div><div class="control-grid compact-grid"><div class="parameter-row"><label>画角 <output id="fov-value">38°</output></label><input id="fov" type="range" min="20" max="90" step="1" value="38" /></div><div class="parameter-row"><label>明るさ <output id="exposure-value">1.0</output></label><input id="exposure" type="range" min=".4" max="2" step=".1" value="1" /></div></div></section>
+        <section class="control-card"><div class="section-title"><span>ステージ</span></div><div class="check-grid"><label class="check"><input id="grid" type="checkbox" checked /> グリッド</label><label class="check"><input id="shadows" type="checkbox" checked /> 影</label><label class="check"><input id="toon-outline" type="checkbox" checked /> 輪郭線</label><label class="check"><input id="show-hdri" type="checkbox" /> HDRI背景</label></div></section>
+        <section class="control-card"><div class="section-title"><span>環境光</span><button id="open-hdri" class="text-button">HDRを選択</button></div><input id="hdri" type="file" accept=".hdr" hidden /><p id="hdri-name" class="muted single-line">Poly Haven — White Studio 05 (CC0)</p><label>環境の強さ <output id="env-value">0.65</output></label><input id="env-intensity" type="range" min="0" max="2" step=".05" value=".65" /></section>
+        <details class="advanced-block"><summary>輪郭線とトゥーン</summary><div class="advanced-body"><label>輪郭線の太さ <output id="outline-value">0.28</output></label><input id="outline" type="range" min="0" max="1.5" step=".05" value=".28" /><label>反射 <output id="specular-value">0.16</output></label><input id="specular" type="range" min="0" max="1" step=".01" value=".16" /><label>影の持ち上げ <output id="shadow-lift-value">0.04</output></label><input id="shadow-lift" type="range" min="0" max=".4" step=".01" value=".04" /></div></details>
+        <details class="advanced-block"><summary>マテリアルとリグ</summary><div class="advanced-body"><div class="section-title"><span>マテリアル表示</span><button id="show-all-materials" class="text-button">すべて表示</button></div><div id="materials" class="morph-list compact"><div class="empty">モデルを選択すると<br />マテリアルが表示されます</div></div><label class="check"><input id="rig-edit" type="checkbox" /> 胸・腰ボーンを直接編集</label></div></details>
+      </div>
+
+      <footer><span id="notice">READY — LOCAL MODE</span><span id="build-version">v4.3.0</span></footer>
+    </aside>
+  </main>
+
+  <div class="runtime-hooks" hidden><button id="scene-select-all">SELECT ALL</button><button id="scene-arrange">ARRANGE</button></div>
+  <div id="toast"></div>
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}</script>
+  <script type="module" src="./dist/app.js?v=mmd-lab-4-2-0"></script>
+</body>
 </html>
