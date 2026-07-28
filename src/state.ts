@@ -105,5 +105,6 @@ export const state: AppState = {
   xrPresenting: false,
   xrFloorHeight: 0,
   xrMoveSpeed: 1.8,
+  xrWorldScale: 1,
   renderScale: 1,
 };

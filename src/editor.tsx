@@ -629,6 +629,18 @@ export function Editor() {
                     redraw((n) => n + 1);
                   }}
                 />
+                <Control
+                  label="VR 全体スケール"
+                  value={state.xrWorldScale}
+                  min={0.25}
+                  max={3}
+                  step={0.05}
+                  onChange={(v) => {
+                    state.xrWorldScale = v;
+                    window.dispatchEvent(new Event("mmdlab-xr-floor-change"));
+                    redraw((n) => n + 1);
+                  }}
+                />
                 <Button
                   size="sm"
                   variant="outline"

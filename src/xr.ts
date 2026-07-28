@@ -30,7 +30,7 @@ function fitStageToRealWorld(): void {
   const bounds = new THREE.Box3().setFromObject(model.mesh);
   const height = bounds.max.y - bounds.min.y;
   if (!Number.isFinite(height) || height < 0.01) return;
-  const scale = HUMAN_REFERENCE_HEIGHT_METERS / height;
+  const scale = (HUMAN_REFERENCE_HEIGHT_METERS / height) * state.xrWorldScale;
   const center = bounds.getCenter(new THREE.Vector3());
   stage.scale.setScalar(scale);
   stage.position.set(

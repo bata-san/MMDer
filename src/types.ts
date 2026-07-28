@@ -251,5 +251,7 @@ export interface AppState {
   xrFloorHeight: number;
   /** Metres per second for controller-stick locomotion. */
   xrMoveSpeed: number;
+  /** Multiplier applied after real-world height calibration. */
+  xrWorldScale: number;
   renderScale: number;
 }
