@@ -8,7 +8,7 @@ const text = (path) => readFile(join(root, path), 'utf8');
 const exists = (path) => stat(join(root, path)).then(() => true, () => false);
 
 const packageJson = JSON.parse(await text('package.json'));
-assert.equal(packageJson.version, '5.1.0');
+assert.equal(packageJson.version, '6.0.0');
 assert(!packageJson.scripts.build.includes('prepare:runtime'));
 
 const client = await text('src/client.ts');
