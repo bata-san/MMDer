@@ -3,6 +3,7 @@ export type PhysicsPart =
   | 'hairFront'
   | 'hairBack'
   | 'hairSide'
+  | 'ears'
   | 'skirt'
   | 'cloth'
   | 'accessory'
@@ -22,7 +23,7 @@ export type BodyRegion =
   | 'head';
 export type MotionScope = 'active' | 'selected' | 'all';
 export type BlinkKind = 'soft' | 'full' | 'double';
-export type InteractionMode = 'select' | 'move' | 'poke' | 'pull';
+export type InteractionMode = 'select' | 'move' | 'poke';
 
 export interface StoredAsset {
   id: string;
@@ -161,9 +162,6 @@ export interface InteractionSettings {
   pokeStrength: number;
   pokeRadius: number;
   shockwaveSpeed: number;
-  pullStrength: number;
-  pullDamping: number;
-  pullRadius: number;
 }
 
 export interface AppState {

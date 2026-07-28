@@ -2,14 +2,10 @@ import * as THREE from 'three';
 import { setLifePointer } from './life.js';
 import { modelFromObject, setActiveModel, toggleModelSelection } from './models.js';
 import {
-  beginPhysicsPull,
   enablePhysics,
   pokePhysics,
   resetPhysics,
-  updatePhysicsPull,
-  type PhysicsPullHandle,
 } from './physics.js';
-import { toast } from './dom.js';
 import { camera, canvas, controls, pointer, raycaster, scene, stage } from './scene.js';
 import { state } from './state.js';
 import type { SceneModel } from './types.js';
@@ -30,9 +26,7 @@ let pointerId: number | null = null;
 let dragPlane = new THREE.Plane();
 let startPoint = new THREE.Vector3();
 let modelDragEntries: ModelDragEntry[] = [];
-let pullHandle: PhysicsPullHandle | null = null;
-let pullTarget = new THREE.Vector3();
-let operation: 'none' | 'move' | 'pull' = 'none';
+let operation: 'none' | 'move' = 'none';
 
 async function ensurePhysics(item: SceneModel): Promise<boolean> {
   // Direct manipulation must be useful even when the Physics tab was not opened first.
@@ -111,26 +105,6 @@ async function pokePicked(hit: PickResult): Promise<void> {
   }
 }
 
-async function beginPull(hit: PickResult, event: PointerEvent): Promise<void> {
-  if (!await ensurePhysics(hit.model)) return;
-  pullHandle = beginPhysicsPull(hit.model, hit.point, state.interactionSettings.pullRadius);
-  if (!pullHandle) {
-    toast('この位置にはつかめる物理ボディがありません。髪や布の近くをクリックしてください。');
-    return;
-  }
-  dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), hit.point);
-  setPointer(event);
-  const world = new THREE.Vector3();
-  if (!raycaster.ray.intersectPlane(dragPlane, world)) return;
-  pullTarget.copy(world);
-  marker.position.copy(hit.point);
-  marker.visible = true;
-  operation = 'pull';
-  controls.enabled = false;
-  pointerId = event.pointerId;
-  canvas.setPointerCapture(event.pointerId);
-}
-
 function prepareManipulationSelection(model: SceneModel, event: PointerEvent): void {
   const additive = event.ctrlKey || event.metaKey || event.shiftKey;
   if (additive) {
@@ -183,10 +157,6 @@ function onPointerDown(event: PointerEvent): void {
       prepareManipulationSelection(hit.model, event);
       void pokePicked(hit);
       break;
-    case 'pull':
-      prepareManipulationSelection(hit.model, event);
-      void beginPull(hit, event);
-      break;
   }
   event.preventDefault();
 }
@@ -200,12 +170,6 @@ function onPointerMove(event: PointerEvent): void {
     const delta = current.sub(startPoint);
     if (state.interactionSettings.groundLock) delta.y = 0;
     modelDragEntries.forEach((entry) => entry.target.copy(entry.start).add(delta));
-  } else if (operation === 'pull') {
-    const world = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(dragPlane, world)) {
-      pullTarget.copy(world);
-      marker.position.copy(world);
-    }
   }
   event.preventDefault();
 }
@@ -215,7 +179,6 @@ function endOperation(event: PointerEvent): void {
   if (operation === 'move') modelDragEntries.forEach((entry) => resetPhysics(entry.model));
   operation = 'none';
   modelDragEntries = [];
-  pullHandle = null;
   marker.visible = false;
   controls.enabled = true;
   if (pointerId !== null && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
@@ -237,8 +200,6 @@ export function updateInteraction(delta: number): void {
   if (operation === 'move') {
     const response = 1 - Math.exp(-Math.max(0, delta) * (8 + state.interactionSettings.dragResponse * 22));
     modelDragEntries.forEach((entry) => entry.model.mesh.position.lerp(entry.target, response));
-  } else if (operation === 'pull' && pullHandle) {
-    updatePhysicsPull(pullHandle, pullTarget, delta);
   }
 }
 

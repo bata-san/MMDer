@@ -19,10 +19,6 @@ export interface PhysicsBodyHit {
   distance: number;
 }
 
-export interface PhysicsPullHandle extends PhysicsBodyHit {
-  localOffset: any;
-}
-
 interface PhysicsShockwave {
   model: SceneModel;
   origin: any;
@@ -45,7 +41,7 @@ const PROFILES: PhysicsProfile[] = [
 ];
 
 export const PHYSICS_PARTS: PhysicsPart[] = [
-  'hairFront', 'hairBack', 'hairSide', 'skirt', 'cloth', 'accessory',
+  'hairFront', 'hairBack', 'hairSide', 'ears', 'skirt', 'cloth', 'accessory',
   'chest', 'torso', 'hips', 'arms', 'legs',
 ];
 
@@ -53,6 +49,7 @@ export const PHYSICS_PART_LABELS: Record<PhysicsPart, string> = {
   hairFront: '前髪',
   hairBack: '後髪・長髪',
   hairSide: '横髪・ツインテール',
+  ears: 'ケモミミ',
   skirt: 'スカート',
   cloth: '衣装・袖・裾',
   accessory: 'リボン・アクセサリ',
@@ -76,6 +73,7 @@ function profile(): PhysicsProfile {
 export function partForBody(wrapper: any, item: SceneModel): PhysicsPart {
   const bone = item.mesh.skeleton?.bones?.[wrapper.params?.boneIndex];
   const name = `${wrapper.params?.name || ''} ${bone?.name || ''}`.toLowerCase();
+  if (/耳|ear/.test(name)) return 'ears';
   if (/前髪|bang|fringe/.test(name)) return 'hairFront';
   if (/後髪|ponytail|long.?hair|back.?hair/.test(name)) return 'hairBack';
   if (/横髪|ツインテ|side.?hair|twin.?tail/.test(name)) return 'hairSide';
@@ -235,7 +233,7 @@ function applyForces(item: SceneModel, time: number): void {
     const phase = time * 1.7 + index * 0.618;
     // Wind belongs to dangling items. Applying it to torso/chest bodies makes
     // them oscillate indefinitely and does not read as believable motion.
-    const partWind = part === 'chest' || part === 'torso' || part === 'hips'
+    const partWind = part === 'chest' || part === 'ears' || part === 'torso' || part === 'hips'
       ? 0
       : wind * tuning.wind;
     const gust = partWind * (1 + Math.sin(phase) * turbulence * 0.55);
@@ -280,8 +278,7 @@ export function findNearestPhysicsBody(item: SceneModel, point: any, radius: num
 }
 
 export function pokePhysics(item: SceneModel, point: any, direction: any, strength: number, radius: number): number {
-  const hasAffectedBody = Boolean(findNearestPhysicsBody(item, point, radius));
-  if (!hasAffectedBody) return 0;
+  if (!item.physics?.engine?.bodies?.some((wrapper: any) => bodyMass(wrapper.body) > 0)) return 0;
   shockwaves.push({
     model: item,
     origin: point.clone(),
@@ -350,15 +347,15 @@ function stabilizeBodies(item: SceneModel): void {
     const angularVelocity = body.getAngularVelocity?.();
     const linearSpeed = vectorLength(linearVelocity);
     const angularSpeed = vectorLength(angularVelocity);
-    const chest = part === 'chest';
-    const maxLinear = chest ? 1.6 : 7;
-    const maxAngular = chest ? 2.4 : 9;
-    const settled = linearSpeed < (chest ? 0.045 : 0.02)
-      && angularSpeed < (chest ? 0.09 : 0.04);
+    const sensitive = part === 'chest' || part === 'ears';
+    const maxLinear = sensitive ? 1.6 : 7;
+    const maxAngular = sensitive ? 2.4 : 9;
+    const settled = linearSpeed < (sensitive ? 0.045 : 0.02)
+      && angularSpeed < (sensitive ? 0.09 : 0.04);
     const frames = settled ? (restFrames.get(body) ?? 0) + 1 : 0;
     restFrames.set(body, frames);
 
-    if (frames >= (chest ? 10 : 20)) {
+    if (frames >= (sensitive ? 10 : 20)) {
       const zero = new Ammo.btVector3(0, 0, 0);
       body.setLinearVelocity?.(zero);
       body.setAngularVelocity?.(zero);
@@ -381,40 +378,6 @@ function stabilizeBodies(item: SceneModel): void {
       Ammo.destroy(limited);
     }
   });
-}
-
-export function beginPhysicsPull(item: SceneModel, point: any, radius: number): PhysicsPullHandle | null {
-  const hit = findNearestPhysicsBody(item, point, radius);
-  if (!hit) return null;
-  // A pull always owns exactly one dynamic rigid body.  This intentionally
-  // differs from pokePhysics, which distributes an impulse over an area.
-  return { ...hit, localOffset: point.clone().sub(hit.position) };
-}
-
-export function updatePhysicsPull(handle: PhysicsPullHandle, target: any, delta: number): void {
-  const Ammo = window.Ammo;
-  const body = handle.wrapper?.body;
-  if (!Ammo || !body) return;
-  const position = bodyPosition(handle.wrapper);
-  if (!position) return;
-  const desired = target.clone().sub(handle.localOffset);
-  const error = desired.sub(position);
-  const velocity = body.getLinearVelocity?.();
-  const settings = state.interactionSettings;
-  const tuning = state.physicsSettings.parts[handle.part];
-  const forceScale = settings.pullStrength * (0.4 + tuning.response * 0.8);
-  const damping = settings.pullDamping;
-  const force = new THREE.Vector3(
-    error.x * forceScale - (velocity?.x?.() ?? 0) * damping,
-    error.y * forceScale - (velocity?.y?.() ?? 0) * damping,
-    error.z * forceScale - (velocity?.z?.() ?? 0) * damping,
-  );
-  const maxForce = 85 * Math.max(0.5, delta * 60);
-  if (force.length() > maxForce) force.setLength(maxForce);
-  const ammoForce = new Ammo.btVector3(force.x, force.y, force.z);
-  body.activate?.(true);
-  body.applyCentralForce?.(ammoForce);
-  Ammo.destroy(ammoForce);
 }
 
 export function stepPhysics(item: SceneModel, delta: number, time: number): void {

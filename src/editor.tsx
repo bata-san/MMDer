@@ -929,23 +929,7 @@ export function Editor() {
                   >
                     押す
                   </Button>
-                  <Button
-                    size="sm"
-                    variant={
-                      state.interactionSettings.mode === "pull"
-                        ? "secondary"
-                        : "outline"
-                    }
-                    onClick={() => setInteractionMode("pull")}
-                  >
-                    つかんで引く
-                  </Button>
                 </div>
-                {state.interactionSettings.mode === "pull" && (
-                  <p className="rounded border bg-muted/40 p-2 text-xs text-muted-foreground">
-                    髪・布などをクリックしたままドラッグします。クリック地点に最も近い物理ボディ一つだけをつかみます。
-                  </p>
-                )}
                 <Toggle
                   label="床面に固定"
                   checked={state.interactionSettings.groundLock}
@@ -991,36 +975,6 @@ export function Editor() {
                   step={0.05}
                   onChange={(v) => {
                     state.interactionSettings.shockwaveSpeed = v;
-                  }}
-                />
-                <Control
-                  label="つかむ強さ"
-                  value={state.interactionSettings.pullStrength}
-                  min={0}
-                  max={50}
-                  step={0.01}
-                  onChange={(v) => {
-                    state.interactionSettings.pullStrength = v;
-                  }}
-                />
-                <Control
-                  label="つかむ減衰"
-                  value={state.interactionSettings.pullDamping}
-                  min={0}
-                  max={12}
-                  step={0.01}
-                  onChange={(v) => {
-                    state.interactionSettings.pullDamping = v;
-                  }}
-                />
-                <Control
-                  label="つかむ判定の広さ"
-                  value={state.interactionSettings.pullRadius}
-                  min={0.05}
-                  max={1.2}
-                  step={0.01}
-                  onChange={(v) => {
-                    state.interactionSettings.pullRadius = v;
                   }}
                 />
                 <h3 className="border-t pt-4 text-xs font-medium">
