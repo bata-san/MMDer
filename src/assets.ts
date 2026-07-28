@@ -91,14 +91,12 @@ export async function importAssets(files: FileList | File[], loadImmediately = f
     }
   }
 
-  const persist = () => {
-    void saveAssets(staged).catch((error) => {
-      console.warn('Asset persistence failed.', error);
-      toast('一部のファイルを保存できませんでした');
-    });
-  };
-  if ('requestIdleCallback' in window) window.requestIdleCallback(persist, { timeout: 6000 });
-  else globalThis.setTimeout(persist, loadImmediately ? 500 : 80);
+  try {
+    await saveAssets(staged);
+  } catch (error) {
+    console.warn('Asset persistence failed.', error);
+    toast('一部のファイルを保存できませんでした');
+  }
 
   setNotice();
   console.info(`Prepared ${staged.length} MMD assets in ${Math.round(performance.now() - startedAt)} ms.`);
