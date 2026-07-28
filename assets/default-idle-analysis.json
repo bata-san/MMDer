@@ -1,0 +1,18 @@
+{
+  "format": "Vocaloid Motion Data 0002",
+  "durationFrames": 120,
+  "durationSeconds": 4,
+  "keyframes": 104,
+  "trackedBones": 47,
+  "activeBones": 8,
+  "active": [
+    { "name": "左肩", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 4.0107, "positionAmplitude": 0 },
+    { "name": "右肩", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 4.0107, "positionAmplitude": 0 },
+    { "name": "頭", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 1.7189, "positionAmplitude": 0 },
+    { "name": "上半身", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 1.7189, "positionAmplitude": 0 },
+    { "name": "下半身", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 1.1459, "positionAmplitude": 0 },
+    { "name": "左腕", "keyframes": 4, "frames": [0, 40, 85, 120], "rotationDegrees": 0.573, "positionAmplitude": 0 },
+    { "name": "右腕", "keyframes": 4, "frames": [0, 40, 85, 120], "rotationDegrees": 0.573, "positionAmplitude": 0 },
+    { "name": "センター", "keyframes": 3, "frames": [0, 61, 120], "rotationDegrees": 0, "positionAmplitude": 0.053282 }
+  ]
+}
