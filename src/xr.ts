@@ -33,7 +33,11 @@ function fitStageToRealWorld(): void {
   const scale = HUMAN_REFERENCE_HEIGHT_METERS / height;
   const center = bounds.getCenter(new THREE.Vector3());
   stage.scale.setScalar(scale);
-  stage.position.set(-center.x * scale, -bounds.min.y * scale, -2);
+  stage.position.set(
+    -center.x * scale,
+    state.xrFloorHeight - bounds.min.y * scale,
+    -2,
+  );
   stage.updateWorldMatrix(true, true);
   xrScaleModelId = model.id;
 }
@@ -75,9 +79,9 @@ function labelTexture(lines: string[], accent = '#9ed6ff'): any {
   return texture;
 }
 
-function panelButton(action: XrAction, x: number, y: number, label: string): void {
+function panelButton(action: XrAction, x: number, y: number, label: string, width = 0.3): void {
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.16, 0.065),
+    new THREE.PlaneGeometry(width, 0.09),
     new THREE.MeshBasicMaterial({ map: labelTexture([label]), transparent: true, side: THREE.DoubleSide }),
   );
   mesh.position.set(x, y, 0.004);
@@ -176,28 +180,59 @@ function selectModelFromRay(controller: any): boolean {
 
 function buildMorphPanel(): void {
   const background = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.52, 0.36),
+    new THREE.PlaneGeometry(0.86, 0.62),
     new THREE.MeshBasicMaterial({ color: 0x07111e, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
   );
   background.position.z = -0.002;
   xrUi.add(background);
-  const title = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.11), new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
+  const title = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 0.15), new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
   title.name = 'XR_MORPH_TITLE';
-  title.position.set(0, 0.105, 0.004);
+  title.position.set(0, 0.19, 0.004);
   xrUi.add(title);
-  const value = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.06), new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
+  const value = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.085), new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide }));
   value.name = 'XR_MORPH_VALUE';
-  value.position.set(0, -0.005, 0.004);
+  value.position.set(0, 0.055, 0.004);
   xrUi.add(value);
-  panelButton('previous', -0.17, -0.005, '前');
-  panelButton('next', 0.17, -0.005, '次');
-  panelButton('down', -0.17, -0.105, '− 0.1');
-  panelButton('up', 0.17, -0.105, '+ 0.1');
-  panelButton('reset', 0, -0.19, '選択モーフを 0');
-  const hint = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.045), new THREE.MeshBasicMaterial({ map: labelTexture(['右トリガー: 操作 / 左グリップ: 隠す'], '#738ba6'), transparent: true, side: THREE.DoubleSide }));
-  hint.position.set(0, -0.265, 0.004);
+  panelButton('previous', -0.22, -0.075, '◀ 前のモーフ');
+  panelButton('next', 0.22, -0.075, '次のモーフ ▶');
+  panelButton('down', -0.22, -0.20, '− 0.1');
+  panelButton('up', 0.22, -0.20, '+ 0.1');
+  panelButton('reset', 0, -0.32, '選択モーフを 0', 0.52);
+  const hint = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 0.06), new THREE.MeshBasicMaterial({ map: labelTexture(['右トリガー: 操作　左グリップ: 表示 / 隠す'], '#738ba6'), transparent: true, side: THREE.DoubleSide }));
+  hint.position.set(0, -0.415, 0.004);
   xrUi.add(hint);
   refreshMorphPanel();
+}
+
+function applyStickLocomotion(delta: number): void {
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  let sideways = 0;
+  let forwardInput = 0;
+  for (const source of session.inputSources as any) {
+    const axes = source.gamepad?.axes as number[] | undefined;
+    if (!axes?.length) continue;
+    // OpenXR controllers conventionally expose the thumbstick as the final
+    // X/Y pair; summing both hands also works with single-stick devices.
+    sideways += axes[Math.max(0, axes.length - 2)] ?? 0;
+    forwardInput += axes[Math.max(0, axes.length - 1)] ?? 0;
+  }
+  const deadZone = (value: number) => Math.abs(value) < 0.16 ? 0 : value;
+  sideways = THREE.MathUtils.clamp(deadZone(sideways), -1, 1);
+  forwardInput = THREE.MathUtils.clamp(deadZone(forwardInput), -1, 1);
+  if (!sideways && !forwardInput) return;
+  const xrCamera = renderer.xr.getCamera(new THREE.PerspectiveCamera());
+  const forward = xrCamera.getWorldDirection(new THREE.Vector3());
+  forward.y = 0;
+  if (forward.lengthSq() < 1e-6) return;
+  forward.normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  // Move the virtual stage opposite the desired viewer movement. This keeps
+  // the browser's local-floor tracking space intact and feels like natural
+  // locomotion without inventing a separate camera transform.
+  const distance = state.xrMoveSpeed * delta;
+  stage.position.addScaledVector(forward, forwardInput * distance);
+  stage.position.addScaledVector(right, -sideways * distance);
 }
 
 function createControllerRay(index: number): void {
@@ -269,6 +304,7 @@ export function updateXr(delta: number): void {
   const viewer = renderer.xr.getCamera(new THREE.PerspectiveCamera());
   const viewerPosition = viewer.getWorldPosition(new THREE.Vector3());
   setLifeXrGazeTarget(viewerPosition);
+  applyStickLocomotion(delta);
   if (!xrUi.visible) return;
   refreshTimer += delta;
   if (refreshTimer >= 0.18) {
@@ -279,10 +315,13 @@ export function updateXr(delta: number): void {
 
 export function setupXr(): void {
   buildMorphPanel();
+  window.addEventListener('mmdlab-xr-floor-change', () => {
+    if (state.xrPresenting) fitStageToRealWorld();
+  });
   const leftGrip = renderer.xr.getControllerGrip(0);
   leftGrip.add(xrUi);
-  xrUi.position.set(0, 0.08, -0.26);
-  xrUi.rotation.x = -0.35;
+  xrUi.position.set(0.05, 0.13, -0.42);
+  xrUi.rotation.x = -0.22;
   scene.add(leftGrip);
   createControllerRay(0);
   createControllerRay(1);

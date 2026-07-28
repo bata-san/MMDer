@@ -103,5 +103,7 @@ export const state: AppState = {
     shockwaveSpeed: 1.8,
   },
   xrPresenting: false,
+  xrFloorHeight: 0,
+  xrMoveSpeed: 1.8,
   renderScale: 1,
 };

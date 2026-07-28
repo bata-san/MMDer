@@ -247,5 +247,9 @@ export interface AppState {
   lifeSettings: LifeSettings;
   interactionSettings: InteractionSettings;
   xrPresenting: boolean;
+  /** Metres above/below the detected XR local floor. */
+  xrFloorHeight: number;
+  /** Metres per second for controller-stick locomotion. */
+  xrMoveSpeed: number;
   renderScale: number;
 }

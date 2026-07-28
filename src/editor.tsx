@@ -605,6 +605,30 @@ export function Editor() {
                   checked={state.rigHandles.length > 0}
                   onChange={setRigEditing}
                 />
+                <h3 className="border-t pt-4 text-xs font-medium">VR表示</h3>
+                <Control
+                  label="VR 床の高さ (m)"
+                  value={state.xrFloorHeight}
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  onChange={(v) => {
+                    state.xrFloorHeight = v;
+                    window.dispatchEvent(new Event("mmdlab-xr-floor-change"));
+                    redraw((n) => n + 1);
+                  }}
+                />
+                <Control
+                  label="VR 移動速度 (m/s)"
+                  value={state.xrMoveSpeed}
+                  min={0.4}
+                  max={4}
+                  step={0.1}
+                  onChange={(v) => {
+                    state.xrMoveSpeed = v;
+                    redraw((n) => n + 1);
+                  }}
+                />
                 <Button
                   size="sm"
                   variant="outline"
