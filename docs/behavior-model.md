@@ -26,15 +26,16 @@ Reference observations include a mean inter-blink interval of 7.4 seconds with l
 - Rate, depth, and slow rate variation are independent controls.
 - Quiet-standing motion is divided into center, hips, lower/upper spine, left/right shoulders, neck, and head.
 - Each body segment combines slow oscillation, a secondary frequency, and bounded stochastic drift. Opposing hip and torso components avoid moving the whole body as one rigid block.
+- Motion acceleration at the pelvis/center produces a bounded delayed posture response through hips, spine, and shoulders; its independent response and recovery controls prevent a perpetual sway.
 
 Research on quiet standing describes center-of-pressure sway as a stochastic process containing slow and fast components, while respiration measurably interacts with postural sway. The implementation uses those qualitative constraints rather than attempting a medical or biomechanical simulation.
 
 ## Direct dynamics and XR
 
 - Pointer raycasting selects meshes and locates the world-space contact point.
-- Poke mode distributes an impulse over nearby dynamic rigid bodies with radial falloff.
-- Pull mode applies a damped spring force toward the pointer target rather than teleporting the rigid body.
-- Physics tuning is split into front/back/side hair, skirt, cloth, accessories, chest, torso, hips, arms, and legs.
+- Poke mode applies an immediate contact impulse at the clicked point, including a tangential torque so MMD type-2 rigid bodies visibly react even when their positional component is bone-driven.
+- A lower-energy radial shockwave follows the initial impact and reaches nearby dynamic rigid bodies with distance falloff.
+- Physics tuning is split into front/back/side hair, kemonomimi, skirt, cloth, accessories, chest, torso, hips, arms, and legs.
 - XR controllers use world-space rays compatible with the same poke path as desktop input.
 
 ## Sources

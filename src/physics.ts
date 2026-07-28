@@ -117,6 +117,30 @@ function bodyMass(body: any): number {
   return invMass > 0 ? 1 / invMass : 0;
 }
 
+function applyContactImpulse(body: any, position: any, contact: any, direction: any, strength: number): void {
+  const Ammo = window.Ammo;
+  if (!Ammo || !body) return;
+  const relativePoint = contact.clone().sub(position);
+  const radial = relativePoint.clone().normalize();
+  const tangent = new THREE.Vector3().crossVectors(direction, radial);
+  if (tangent.lengthSq() < 0.0001) tangent.crossVectors(radial, new THREE.Vector3(0, 1, 0));
+  if (tangent.lengthSq() < 0.0001) tangent.set(1, 0, 0);
+  tangent.normalize();
+  const impulseDirection = direction.clone().multiplyScalar(0.35).addScaledVector(tangent, 0.94).normalize();
+  const impulse = new Ammo.btVector3(impulseDirection.x * strength, impulseDirection.y * strength, impulseDirection.z * strength);
+  const relative = new Ammo.btVector3(relativePoint.x, relativePoint.y, relativePoint.z);
+  body.activate?.(true);
+  body.setActivationState?.(1);
+  if (body.applyImpulse) body.applyImpulse(impulse, relative);
+  else body.applyCentralImpulse?.(impulse);
+  const torque = relativePoint.clone().cross(impulseDirection).multiplyScalar(strength * 0.68);
+  const ammoTorque = new Ammo.btVector3(torque.x, torque.y, torque.z);
+  body.applyTorqueImpulse?.(ammoTorque);
+  Ammo.destroy(ammoTorque);
+  Ammo.destroy(relative);
+  Ammo.destroy(impulse);
+}
+
 export function applyPhysicsSettings(item: SceneModel | null = state.active): void {
   const runtime = item?.physics;
   if (!item || !runtime?.engine?.bodies) return;
@@ -278,16 +302,50 @@ export function findNearestPhysicsBody(item: SceneModel, point: any, radius: num
 }
 
 export function pokePhysics(item: SceneModel, point: any, direction: any, strength: number, radius: number): number {
-  if (!item.physics?.engine?.bodies?.some((wrapper: any) => bodyMass(wrapper.body) > 0)) return 0;
+  const Ammo = window.Ammo;
+  const bodies = item.physics?.engine?.bodies;
+  if (!Ammo || !bodies) return 0;
+  let affected = 0;
+  let nearest: { wrapper: any; position: any; distance: number; part: PhysicsPart } | null = null;
+  bodies.forEach((wrapper: any) => {
+    const body = wrapper.body;
+    if (!body || bodyMass(body) <= 0) return;
+    const part = partForBody(wrapper, item);
+    if (!state.physicsSettings.parts[part].enabled) return;
+    const position = bodyPosition(wrapper);
+    if (!position) return;
+    const distance = position.distanceTo(point);
+    if (!nearest || distance < nearest.distance) nearest = { wrapper, position, distance, part };
+    if (distance > radius) return;
+    const outward = position.clone().sub(point);
+    if (outward.lengthSq() < 0.0001) outward.copy(direction);
+    else outward.normalize().lerp(direction, 0.2).normalize();
+    const tuning = state.physicsSettings.parts[part];
+    const impulseAmount = strength * (1 - distance / Math.max(0.001, radius)) * (0.7 + tuning.response * 0.7);
+    applyContactImpulse(body, position, point, outward, impulseAmount);
+    affected += 1;
+  });
+
+  // A visible reaction is preferable to silently dropping an input when an
+  // imported PMX places its rigid body farther from the rendered surface.
+  if (!affected && nearest) {
+    const nearestBody = nearest as { wrapper: any; position: any; distance: number; part: PhysicsPart };
+    const outward = nearestBody.position.clone().sub(point);
+    if (outward.lengthSq() < 0.0001) outward.copy(direction);
+    else outward.normalize();
+    applyContactImpulse(nearestBody.wrapper.body, nearestBody.position, point, outward, strength * 0.55);
+    affected = 1;
+  }
+  if (!affected) return 0;
   shockwaves.push({
     model: item,
     origin: point.clone(),
     direction: direction.clone().normalize(),
-    strength,
+    strength: strength * 0.28,
     radius: Math.max(0.05, radius),
     speed: Math.max(0.2, state.interactionSettings.shockwaveSpeed),
     age: 0,
-    previousRadius: 0,
+    previousRadius: Math.min(radius, 0.12),
   });
   return 1;
 }
@@ -316,14 +374,7 @@ function applyShockwaves(item: SceneModel, delta: number): void {
       if (outward.lengthSq() < 0.0001) outward.copy(wave.direction);
       else outward.normalize().lerp(wave.direction, 0.24).normalize();
       const impulseAmount = wave.strength * falloff * (0.35 + tuning.response * 0.75);
-      const impulse = new Ammo.btVector3(
-        outward.x * impulseAmount,
-        outward.y * impulseAmount,
-        outward.z * impulseAmount,
-      );
-      body.activate?.(true);
-      body.applyCentralImpulse?.(impulse);
-      Ammo.destroy(impulse);
+      applyContactImpulse(body, position, wave.origin, outward, impulseAmount);
     });
     wave.previousRadius = currentRadius;
     if (currentRadius >= wave.radius) shockwaves.splice(index, 1);

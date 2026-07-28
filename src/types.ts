@@ -86,6 +86,10 @@ export interface LifeController {
   microTargetPitch: number;
   nextMicroAt: number;
   swayNoise: Partial<Record<BodyRegion, number>>;
+  anchorPosition: any;
+  anchorVelocity: any;
+  posturePitch: number;
+  postureRoll: number;
 }
 
 export interface PhysicsRuntime {
@@ -152,6 +156,8 @@ export interface LifeSettings {
   sway: number;
   swaySpeed: number;
   swayIrregularity: number;
+  inertiaResponse: number;
+  postureRecovery: number;
   segments: Record<BodyRegion, number>;
 }
 

@@ -135,6 +135,9 @@ function createBreathAction(mesh: any, motion: MotionController): { clip: any | 
 export function createLifeController(mesh: any, motion: MotionController): LifeController {
   const breath = createBreathAction(mesh, motion);
   const swayNoise: LifeController['swayNoise'] = {};
+  const body = collectBodyBindings(mesh);
+  const anchor = body.hips?.bone ?? body.center?.bone ?? body.spineLower?.bone ?? mesh;
+  const anchorPosition = anchor.getWorldPosition(new THREE.Vector3());
   BODY_REGIONS.forEach((region) => { swayNoise[region] = 0; });
   return {
     mesh,
@@ -149,7 +152,7 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     breathClip: breath.clip,
     breathAction: breath.action,
     eyes: collectEyeBindings(mesh),
-    body: collectBodyBindings(mesh),
+    body,
     gazeStartYaw: 0,
     gazeStartPitch: 0,
     gazeYaw: 0,
@@ -165,6 +168,10 @@ export function createLifeController(mesh: any, motion: MotionController): LifeC
     microTargetPitch: 0,
     nextMicroAt: 0.25 + Math.random() * 0.7,
     swayNoise,
+    anchorPosition,
+    anchorVelocity: new THREE.Vector3(),
+    posturePitch: 0,
+    postureRoll: 0,
   };
 }
 
@@ -334,6 +341,23 @@ function regionOffset(life: LifeController, region: BodyRegion, delta: number): 
   }
 }
 
+function updatePostureInertia(life: LifeController, delta: number): void {
+  const settings = state.lifeSettings;
+  const anchor = life.body.hips?.bone ?? life.body.center?.bone ?? life.body.spineLower?.bone;
+  if (!anchor || delta <= 0) return;
+  const position = anchor.getWorldPosition(new THREE.Vector3());
+  const velocity = position.clone().sub(life.anchorPosition).multiplyScalar(1 / Math.max(0.001, delta));
+  const acceleration = velocity.clone().sub(life.anchorVelocity).multiplyScalar(1 / Math.max(0.001, delta));
+  life.anchorPosition.copy(position);
+  life.anchorVelocity.lerp(velocity, 1 - Math.exp(-delta * 9));
+  const response = settings.inertiaResponse;
+  const targetPitch = THREE.MathUtils.clamp(-acceleration.z * 0.0026 * response, -0.035, 0.035);
+  const targetRoll = THREE.MathUtils.clamp(acceleration.x * 0.0022 * response, -0.028, 0.028);
+  const follow = 1 - Math.exp(-delta * THREE.MathUtils.lerp(3, 14, settings.postureRecovery));
+  life.posturePitch += (targetPitch - life.posturePitch) * follow;
+  life.postureRoll += (targetRoll - life.postureRoll) * follow;
+}
+
 export function updateLife(
   life: LifeController,
   motion: MotionController,
@@ -361,6 +385,7 @@ export function updateLife(
   applyBlinkMorphs(life, motion, blinkProfile(life), poseAdvanced);
   if (!poseAdvanced) return;
   updateGaze(life, motion, delta);
+  updatePostureInertia(life, delta);
 
   const eyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
     life.gazePitch + life.microPitch,
@@ -379,6 +404,15 @@ export function updateLife(
         0,
       ));
       offset = offset.clone().multiply(follow);
+    }
+    if (region === 'hips' || region === 'spineLower' || region === 'spineUpper' || region === 'shoulderLeft' || region === 'shoulderRight') {
+      const scale = region === 'hips' ? 0.5 : region === 'spineLower' ? 0.78 : region === 'spineUpper' ? 1 : 0.22;
+      const inertia = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        life.posturePitch * scale,
+        0,
+        life.postureRoll * scale,
+      ));
+      offset = offset.clone().multiply(inertia);
     }
     applyBoneOffset(life.body[region], offset, motion);
   });
