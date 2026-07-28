@@ -95,7 +95,7 @@ export const state: AppState = {
     pullDamping: 3.5,
     // This is a picking tolerance, not an area-of-effect.  Keep it small so a
     // drag locks to one hair / cloth rigid body close to the clicked point.
-    pullRadius: 0.32,
+    pullRadius: 0.6,
   },
   xrPresenting: false,
   renderScale: 1,

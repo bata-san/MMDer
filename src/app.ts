@@ -53,7 +53,9 @@ function animate(): void {
   state.models.forEach((model) => {
     if (state.playing) model.motion.mixer.update(delta);
     updateLife(model.life, model.motion, delta, state.playing);
-    if (state.playing) stepPhysics(model, delta, state.elapsed);
+    // Direct physics manipulation must work while the timeline is paused too.
+    // MMDPhysics also needs regular steps to settle a body after a pull.
+    if (state.physics) stepPhysics(model, delta, state.elapsed);
   });
   updateTimeline();
   updateInteraction(delta);

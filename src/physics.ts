@@ -81,8 +81,10 @@ function configureConstraint(wrapper: any, stiffness: number): void {
   const constraint = wrapper?.constraint;
   if (!constraint?.setParam) return;
   try {
-    const erp = 0.16 + stiffness * 0.64;
-    const cfm = 0.018 * (1 - stiffness) + 0.0005;
+    // Large ERP values over-correct each frame and cause the familiar MMD
+    // accessory jitter. Keep the solver soft enough to converge at rest.
+    const erp = 0.06 + stiffness * 0.14;
+    const cfm = 0.04 * (1 - stiffness) + 0.008;
     constraint.setParam(2, erp, -1);
     constraint.setParam(3, cfm, -1);
   } catch {
@@ -201,7 +203,7 @@ function applyForces(item: SceneModel, time: number): void {
   const runtime = item.physics;
   const Ammo = window.Ammo;
   if (!runtime?.engine?.bodies || !Ammo) return;
-  const { wind, turbulence, air, gravity, parts } = state.physicsSettings;
+  const { wind, turbulence, gravity, parts } = state.physicsSettings;
 
   runtime.engine.bodies.forEach((wrapper: any, index: number) => {
     const part = partForBody(wrapper, item);
@@ -217,15 +219,13 @@ function applyForces(item: SceneModel, time: number): void {
     const gust = partWind * (1 + Math.sin(phase) * turbulence * 0.55);
     const lateral = Math.cos(time * 0.83 + index * 0.37) * partWind * turbulence * 0.32;
     const vertical = Math.sin(time * 2.31 + index) * partWind * turbulence * 0.12;
-    const velocity = body.getLinearVelocity?.();
     const response = THREE.MathUtils.clamp(tuning.response, 0, 1.5);
-    const dragX = velocity ? -velocity.x() * air * (0.08 + response * 0.06) * mass : 0;
-    const dragY = velocity ? -velocity.y() * air * (0.05 + response * 0.04) * mass : 0;
-    const dragZ = velocity ? -velocity.z() * air * (0.08 + response * 0.06) * mass : 0;
     const gravityCorrection = -98 * gravity * (tuning.gravity - 1) * mass;
-    const forceX = (gust + dragX) * response;
-    const forceY = (vertical + dragY + gravityCorrection) * response;
-    const forceZ = (lateral + dragZ) * response;
+    // Air resistance is configured on the rigid body itself. Applying another
+    // per-frame velocity force prevents Bullet from ever reaching rest.
+    const forceX = gust * response;
+    const forceY = (vertical + gravityCorrection) * response;
+    const forceZ = lateral * response;
     const forceLengthSq = forceX * forceX + forceY * forceY + forceZ * forceZ;
 
     // Do not wake bodies with a zero force every simulation tick.  This is
@@ -258,33 +258,23 @@ export function findNearestPhysicsBody(item: SceneModel, point: any, radius: num
 }
 
 export function pokePhysics(item: SceneModel, point: any, direction: any, strength: number, radius: number): number {
-  const bodies = item.physics?.engine?.bodies;
   const Ammo = window.Ammo;
-  if (!bodies || !Ammo) return 0;
-  let affected = 0;
-  bodies.forEach((wrapper: any) => {
-    const body = wrapper.body;
-    if (!body || bodyMass(body) <= 0) return;
-    const part = partForBody(wrapper, item);
-    const tuning = state.physicsSettings.parts[part];
-    if (!tuning.enabled) return;
-    const position = bodyPosition(wrapper);
-    if (!position) return;
-    const distance = position.distanceTo(point);
-    if (distance > radius) return;
-    const falloff = 1 - distance / Math.max(0.001, radius);
-    const impulseAmount = strength * falloff * (0.45 + tuning.response * 0.7);
-    const impulse = new Ammo.btVector3(
-      direction.x * impulseAmount,
-      direction.y * impulseAmount,
-      direction.z * impulseAmount,
-    );
-    body.activate?.(true);
-    body.applyCentralImpulse?.(impulse);
-    Ammo.destroy(impulse);
-    affected += 1;
-  });
-  return affected;
+  if (!Ammo) return 0;
+  // Like grabbing, a poke targets one physical point rather than an
+  // unpredictable cluster of nearby hair and cloth bodies.
+  const hit = findNearestPhysicsBody(item, point, radius);
+  if (!hit) return 0;
+  const tuning = state.physicsSettings.parts[hit.part];
+  const impulseAmount = strength * (0.45 + tuning.response * 0.7);
+  const impulse = new Ammo.btVector3(
+    direction.x * impulseAmount,
+    direction.y * impulseAmount,
+    direction.z * impulseAmount,
+  );
+  hit.wrapper.body.activate?.(true);
+  hit.wrapper.body.applyCentralImpulse?.(impulse);
+  Ammo.destroy(impulse);
+  return 1;
 }
 
 export function beginPhysicsPull(item: SceneModel, point: any, radius: number): PhysicsPullHandle | null {

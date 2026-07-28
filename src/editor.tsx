@@ -192,6 +192,8 @@ export function Editor() {
   const [leftWidth, setLeftWidth] = useState(240);
   const [rightWidth, setRightWidth] = useState(340);
   const [dark, setDark] = useState(true);
+  const [morphQuery, setMorphQuery] = useState("");
+  const [materialQuery, setMaterialQuery] = useState("");
   const [, redraw] = useState(0);
   const folder = useRef<HTMLInputElement>(null);
   const motion = useRef<HTMLInputElement>(null);
@@ -249,6 +251,8 @@ export function Editor() {
     state.interactionSettings.mode = mode;
     redraw((n) => n + 1);
   };
+  const matchesQuery = (name: string, query: string) =>
+    name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
   return (
     <main
       className="grid h-screen grid-rows-[48px_minmax(0,1fr)] bg-background text-foreground"
@@ -1075,8 +1079,18 @@ export function Editor() {
                     材質を全表示
                   </Button>
                 </div>
+                <input
+                  type="search"
+                  value={morphQuery}
+                  onChange={(event) => setMorphQuery(event.target.value)}
+                  placeholder="モーフ名を検索"
+                  aria-label="モーフ名を検索"
+                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
                 {morphMeshes(state.active?.mesh).flatMap((mesh: any) =>
-                  Object.entries(mesh.morphTargetDictionary ?? {}).map(
+                  Object.entries(mesh.morphTargetDictionary ?? {})
+                    .filter(([name]) => matchesQuery(name, morphQuery))
+                    .map(
                     ([name, index]) => (
                       <Control
                         key={`${mesh.uuid}-${name}`}
@@ -1094,13 +1108,28 @@ export function Editor() {
                 <h3 className="border-t pt-4 text-xs font-medium">
                   マテリアル
                 </h3>
+                <input
+                  type="search"
+                  value={materialQuery}
+                  onChange={(event) => setMaterialQuery(event.target.value)}
+                  placeholder="材質名を検索"
+                  aria-label="材質名を検索"
+                  className="h-8 w-full rounded-md border bg-transparent px-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                />
                 {state.active &&
                   (() => {
                     const entries: any[] = [];
                     eachMaterial(state.active.mesh, (material) =>
                       entries.push(material),
                     );
-                    return entries.map((material, index) => (
+                    return entries
+                      .filter((material, index) =>
+                        matchesQuery(
+                          material.name || `材質 ${index + 1}`,
+                          materialQuery,
+                        ),
+                      )
+                      .map((material, index) => (
                       <Toggle
                         key={`${material.uuid}-${index}`}
                         label={material.name || `材質 ${index + 1}`}
