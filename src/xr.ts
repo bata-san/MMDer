@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { setNotice } from './dom.js';
 import { pokeFromRay } from './interaction.js';
 import { setLifeXrGazeTarget } from './life.js';
@@ -222,6 +221,47 @@ function createControllerRay(index: number): void {
   scene.add(controller);
 }
 
+function createXrConnectButton(): HTMLElement {
+  const button = document.createElement('button');
+  button.id = 'xr-button';
+  button.type = 'button';
+  button.textContent = 'VRゴーグルを確認中…';
+  Object.assign(button.style, {
+    width: 'auto', minWidth: '132px', height: '28px', padding: '0 10px',
+    margin: '0', borderRadius: '4px', fontSize: '11px', lineHeight: '26px',
+  });
+  const xr = (navigator as any).xr;
+  if (!xr) {
+    button.disabled = true;
+    button.textContent = 'VR未対応ブラウザ';
+    return button;
+  }
+  void xr.isSessionSupported('immersive-vr').then((supported: boolean) => {
+    if (!supported) {
+      button.disabled = true;
+      button.textContent = 'VRゴーグル未検出';
+      return;
+    }
+    button.textContent = 'VRゴーグルに接続';
+    button.disabled = false;
+  }).catch(() => {
+    button.disabled = true;
+    button.textContent = 'VRを利用できません';
+  });
+  button.addEventListener('click', () => {
+    if (renderer.xr.isPresenting) return;
+    // Must be requested directly from this user gesture. The browser routes
+    // the immersive session to the wired HMD it has registered with WebXR.
+    void xr.requestSession('immersive-vr', {
+      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+    }).then((session: any) => renderer.xr.setSession(session)).catch((error: unknown) => {
+      console.warn('Could not connect to the VR headset.', error);
+      setNotice('VRゴーグルへ接続できません。OpenXR / SteamVR / Link 接続を確認してください。');
+    });
+  });
+  return button;
+}
+
 export function updateXr(delta: number): void {
   if (!state.xrPresenting) return;
   if ((state.active?.id ?? null) !== xrScaleModelId) fitStageToRealWorld();
@@ -246,9 +286,7 @@ export function setupXr(): void {
   scene.add(leftGrip);
   createControllerRay(0);
   createControllerRay(1);
-  const xrButton = VRButton.createButton(renderer, { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] }) as HTMLElement;
-  xrButton.id = 'xr-button';
-  Object.assign(xrButton.style, { position: 'static', width: 'auto', minWidth: '82px', height: '28px', padding: '0 10px', margin: '0', borderRadius: '4px', fontSize: '10px', lineHeight: '26px', opacity: '1' });
+  const xrButton = createXrConnectButton();
   document.querySelector('.status')?.append(xrButton);
   renderer.xr.addEventListener('sessionstart', () => {
     state.xrPresenting = true;
@@ -261,6 +299,7 @@ export function setupXr(): void {
     renderer.xr.setFoveation?.(1);
     xrUi.visible = true;
     refreshMorphPanel();
+    xrButton.textContent = 'VR表示中';
     window.dispatchEvent(new Event('mmdlab-xr-change'));
     setNotice('VR表示中 — PCで準備・編集した内容をヘッドセットへ即時反映');
   });
@@ -272,6 +311,7 @@ export function setupXr(): void {
     xrScaleModelId = null;
     setXrStageMode(false);
     resizeScene();
+    xrButton.textContent = 'VRゴーグルに接続';
     window.dispatchEvent(new Event('mmdlab-xr-change'));
     setNotice();
   });
