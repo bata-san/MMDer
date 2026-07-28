@@ -94,7 +94,9 @@ export const state: AppState = {
     mode: 'select',
     groundLock: true,
     dragResponse: 0.72,
-    pokeStrength: 12,
+    // Bullet impulses are expressed in model-space units.  A double-digit
+    // default launches light hair bodies through their PMX constraints.
+    pokeStrength: 0.85,
     pokeRadius: 1.5,
     shockwaveSpeed: 1.8,
   },

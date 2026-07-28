@@ -120,20 +120,24 @@ function bodyMass(body: any): number {
 function applyContactImpulse(body: any, position: any, contact: any, direction: any, strength: number): void {
   const Ammo = window.Ammo;
   if (!Ammo || !body) return;
+  const safeStrength = THREE.MathUtils.clamp(strength, 0, 1.2);
+  if (safeStrength <= 0) return;
   const relativePoint = contact.clone().sub(position);
   const radial = relativePoint.clone().normalize();
   const tangent = new THREE.Vector3().crossVectors(direction, radial);
   if (tangent.lengthSq() < 0.0001) tangent.crossVectors(radial, new THREE.Vector3(0, 1, 0));
   if (tangent.lengthSq() < 0.0001) tangent.set(1, 0, 0);
   tangent.normalize();
-  const impulseDirection = direction.clone().multiplyScalar(0.35).addScaledVector(tangent, 0.94).normalize();
-  const impulse = new Ammo.btVector3(impulseDirection.x * strength, impulseDirection.y * strength, impulseDirection.z * strength);
+  // "Push" needs to travel into the contacted surface.  The earlier mostly
+  // tangential impulse plus a large torque was enough to eject hair bodies.
+  const impulseDirection = direction.clone().multiplyScalar(0.92).addScaledVector(tangent, 0.08).normalize();
+  const impulse = new Ammo.btVector3(impulseDirection.x * safeStrength, impulseDirection.y * safeStrength, impulseDirection.z * safeStrength);
   const relative = new Ammo.btVector3(relativePoint.x, relativePoint.y, relativePoint.z);
   body.activate?.(true);
   body.setActivationState?.(1);
   if (body.applyImpulse) body.applyImpulse(impulse, relative);
   else body.applyCentralImpulse?.(impulse);
-  const torque = relativePoint.clone().cross(impulseDirection).multiplyScalar(strength * 0.68);
+  const torque = relativePoint.clone().cross(impulseDirection).multiplyScalar(safeStrength * 0.1);
   const ammoTorque = new Ammo.btVector3(torque.x, torque.y, torque.z);
   body.applyTorqueImpulse?.(ammoTorque);
   Ammo.destroy(ammoTorque);
@@ -181,7 +185,9 @@ export function applyPhysicsSettings(item: SceneModel | null = state.active): vo
     // actually applies a force.
     body.setSleepingThresholds?.(0.08, 0.12);
   });
-  runtime.engine.constraints?.forEach((wrapper: any) => configureConstraint(wrapper, stiffness));
+  // Preserve the spring/limit data authored in PMX.  Generic6Dof parameters
+  // differ between Ammo builds; overriding ERP/CFM here can destabilize a
+  // perfectly valid imported hair chain.
 }
 
 export async function enablePhysics(item: SceneModel | null = state.active): Promise<void> {
@@ -398,9 +404,9 @@ function stabilizeBodies(item: SceneModel): void {
     const angularVelocity = body.getAngularVelocity?.();
     const linearSpeed = vectorLength(linearVelocity);
     const angularSpeed = vectorLength(angularVelocity);
-    const sensitive = part === 'chest' || part === 'ears';
-    const maxLinear = sensitive ? 1.6 : 7;
-    const maxAngular = sensitive ? 2.4 : 9;
+    const sensitive = part === 'chest' || part === 'ears' || part === 'hairFront' || part === 'hairBack' || part === 'hairSide';
+    const maxLinear = sensitive ? 0.9 : 2.8;
+    const maxAngular = sensitive ? 1.8 : 4.5;
     const settled = linearSpeed < (sensitive ? 0.045 : 0.02)
       && angularSpeed < (sensitive ? 0.09 : 0.04);
     const frames = settled ? (restFrames.get(body) ?? 0) + 1 : 0;
@@ -413,6 +419,23 @@ function stabilizeBodies(item: SceneModel): void {
       body.clearForces?.();
       body.setActivationState?.(2);
       Ammo.destroy(zero);
+      return;
+    }
+
+    const corrupt = !Number.isFinite(linearSpeed)
+      || !Number.isFinite(angularSpeed)
+      || linearSpeed > maxLinear * 1.8
+      || angularSpeed > maxAngular * 1.8;
+    if (corrupt) {
+      // Resetting only the runaway rigid body keeps the rest of the model
+      // continuous while restoring its transform from its owning bone.
+      wrapper.reset?.();
+      const zero = new Ammo.btVector3(0, 0, 0);
+      body.setLinearVelocity?.(zero);
+      body.setAngularVelocity?.(zero);
+      body.clearForces?.();
+      Ammo.destroy(zero);
+      restFrames.set(body, 0);
       return;
     }
 

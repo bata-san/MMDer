@@ -491,11 +491,15 @@ function regionOffset(life: LifeController, region: BodyRegion, delta: number): 
   const noiseTarget = normalRandom() * 0.009 * settings.swayIrregularity;
   life.swayNoise[region] = THREE.MathUtils.lerp(life.swayNoise[region] ?? 0, noiseTarget, noiseResponse);
   const noise = life.swayNoise[region] ?? 0;
+  // Do not drive the whole body from repeating sine waves. Those are easy to
+  // spot when viewing closely and make an otherwise idle character feel like
+  // a looping robot. The very small cyclic component only prevents a dead
+  // stop; the visible variation comes from the slowly filtered random target.
   const slow = Math.sin(life.lifeTime * speed + phase);
   const secondary = Math.sin(life.lifeTime * speed * 0.47 + phase * 1.73);
-  const yaw = (slow * 0.032 + secondary * 0.011 + noise) * segment;
-  const pitch = (secondary * 0.02 + noise * 0.7) * segment;
-  const roll = (Math.sin(life.lifeTime * speed * 0.71 + phase * 0.63) * 0.025 - noise * 0.55) * segment;
+  const yaw = (slow * 0.004 + secondary * 0.002 + noise * 2.1) * segment;
+  const pitch = (secondary * 0.003 + noise * 1.35) * segment;
+  const roll = (Math.sin(life.lifeTime * speed * 0.71 + phase * 0.63) * 0.003 - noise * 1.1) * segment;
 
   switch (region) {
     case 'center': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.35, yaw * 0.32, roll * 0.25));
@@ -559,7 +563,9 @@ function updateFootPlacement(life: LifeController, motion: MotionController): vo
     return;
   }
 
-  if (!life.footStepSide && (life.forceFootStep || offBalance || life.lifeTime >= life.nextFootStepAt)) {
+  // Idle stepping on a timer reads as a looped robot animation. A replant is
+  // corrective: it happens only after a visible balance loss (or the test).
+  if (!life.footStepSide && (life.forceFootStep || offBalance)) {
     life.footStepSide = offBalance ? correctionSide : Math.random() < 0.5 ? 'left' : 'right';
     life.footStepStartedAt = life.lifeTime;
   }

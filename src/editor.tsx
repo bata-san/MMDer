@@ -968,7 +968,7 @@ export function Editor() {
                   label="衝撃波の強さ"
                   value={state.interactionSettings.pokeStrength}
                   min={0}
-                  max={50}
+                  max={4}
                   step={0.01}
                   onChange={(v) => {
                     state.interactionSettings.pokeStrength = v;
