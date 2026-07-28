@@ -18,10 +18,16 @@
     "deploy": "npm run check && wrangler deploy"
   },
   "dependencies": {
+    "@notion-kit/ui": "^1.0.0",
     "@shoelace-style/shoelace": "2.20.1",
-    "three": "0.166.1"
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "three": "0.166.1",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.8.3",
     "vite": "^7.0.0",
     "wrangler": "^4.0.0"
