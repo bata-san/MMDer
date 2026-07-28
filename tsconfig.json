@@ -13,6 +13,7 @@
     "checkJs": false,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "verbatimModuleSyntax": true
+    ,"jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "runtime/**/*.js"]
 }
