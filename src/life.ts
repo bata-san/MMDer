@@ -117,11 +117,11 @@ function createBreathAction(mesh: any, motion: MotionController): { clip: any | 
   const rightShoulder = findBone(mesh, [/^右肩$/i, /^(right.?shoulder|shoulder[_ .-]?r)$/i]);
   const neck = findBone(mesh, [/^首$/i, /^neck$/i]);
   const tracks: any[] = [];
-  if (lower) tracks.push(quaternionTrack(lower.name, [[0, 0, 0], [0.008, 0, 0], [0, 0, 0], [-0.003, 0, 0], [0, 0, 0]]));
-  if (upper) tracks.push(quaternionTrack(upper.name, [[0, 0, 0], [0.014, 0, 0.001], [0, 0, 0], [-0.005, 0, -0.001], [0, 0, 0]]));
-  if (leftShoulder) tracks.push(quaternionTrack(leftShoulder.name, [[0, 0, 0], [0, 0, -0.004], [0, 0, 0], [0, 0, 0.001], [0, 0, 0]]));
-  if (rightShoulder) tracks.push(quaternionTrack(rightShoulder.name, [[0, 0, 0], [0, 0, 0.004], [0, 0, 0], [0, 0, -0.001], [0, 0, 0]]));
-  if (neck) tracks.push(quaternionTrack(neck.name, [[0, 0, 0], [-0.002, 0, 0], [0, 0, 0], [0.001, 0, 0], [0, 0, 0]]));
+  if (lower) tracks.push(quaternionTrack(lower.name, [[0, 0, 0], [0.018, 0, 0], [0, 0, 0], [-0.007, 0, 0], [0, 0, 0]]));
+  if (upper) tracks.push(quaternionTrack(upper.name, [[0, 0, 0], [0.03, 0, 0.002], [0, 0, 0], [-0.011, 0, -0.002], [0, 0, 0]]));
+  if (leftShoulder) tracks.push(quaternionTrack(leftShoulder.name, [[0, 0, 0], [0, 0, -0.009], [0, 0, 0], [0, 0, 0.003], [0, 0, 0]]));
+  if (rightShoulder) tracks.push(quaternionTrack(rightShoulder.name, [[0, 0, 0], [0, 0, 0.009], [0, 0, 0], [0, 0, -0.003], [0, 0, 0]]));
+  if (neck) tracks.push(quaternionTrack(neck.name, [[0, 0, 0], [-0.005, 0, 0], [0, 0, 0], [0.002, 0, 0], [0, 0, 0]]));
   if (!tracks.length) return { clip: null, action: null };
   const clip = new THREE.AnimationClip('Life breathing additive', 1, tracks);
   THREE.AnimationUtils.makeClipAdditive(clip, 0, clip, 30);
@@ -258,8 +258,8 @@ function chooseGazeTarget(life: LifeController, motion: MotionController): void 
   const range = settings.gazeRange;
   life.gazeStartYaw = life.gazeYaw;
   life.gazeStartPitch = life.gazePitch;
-  life.gazeTargetYaw = (Math.random() * 2 - 1) * 0.17 * range;
-  life.gazeTargetPitch = (Math.random() * 2 - 1) * 0.095 * range;
+  life.gazeTargetYaw = (Math.random() * 2 - 1) * 0.25 * range;
+  life.gazeTargetPitch = (Math.random() * 2 - 1) * 0.14 * range;
   life.gazeElapsed = 0;
   const amplitudeRadians = Math.hypot(life.gazeTargetYaw - life.gazeStartYaw, life.gazeTargetPitch - life.gazeStartPitch);
   const amplitudeDegrees = THREE.MathUtils.radToDeg(amplitudeRadians);
@@ -274,8 +274,8 @@ function updateGaze(life: LifeController, motion: MotionController, delta: numbe
   const settings = state.lifeSettings;
   if (settings.followPointer) {
     const range = settings.gazeRange;
-    life.gazeTargetYaw = pointerX * 0.18 * range;
-    life.gazeTargetPitch = pointerY * 0.1 * range;
+    life.gazeTargetYaw = pointerX * 0.27 * range;
+    life.gazeTargetPitch = pointerY * 0.16 * range;
     const response = 1 - Math.exp(-delta * 6);
     life.gazeYaw += (life.gazeTargetYaw - life.gazeYaw) * response;
     life.gazePitch += (life.gazeTargetPitch - life.gazePitch) * response;
@@ -320,14 +320,14 @@ function regionOffset(life: LifeController, region: BodyRegion, delta: number): 
   const index = BODY_REGIONS.indexOf(region);
   const phase = life.phase + index * 0.91;
   const noiseResponse = 1 - Math.exp(-delta * (0.45 + settings.swayIrregularity * 1.8));
-  const noiseTarget = normalRandom() * 0.0045 * settings.swayIrregularity;
+  const noiseTarget = normalRandom() * 0.009 * settings.swayIrregularity;
   life.swayNoise[region] = THREE.MathUtils.lerp(life.swayNoise[region] ?? 0, noiseTarget, noiseResponse);
   const noise = life.swayNoise[region] ?? 0;
   const slow = Math.sin(life.lifeTime * speed + phase);
   const secondary = Math.sin(life.lifeTime * speed * 0.47 + phase * 1.73);
-  const yaw = (slow * 0.006 + secondary * 0.002 + noise) * segment;
-  const pitch = (secondary * 0.004 + noise * 0.5) * segment;
-  const roll = (Math.sin(life.lifeTime * speed * 0.71 + phase * 0.63) * 0.005 - noise * 0.4) * segment;
+  const yaw = (slow * 0.032 + secondary * 0.011 + noise) * segment;
+  const pitch = (secondary * 0.02 + noise * 0.7) * segment;
+  const roll = (Math.sin(life.lifeTime * speed * 0.71 + phase * 0.63) * 0.025 - noise * 0.55) * segment;
 
   switch (region) {
     case 'center': return new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * 0.35, yaw * 0.32, roll * 0.25));
