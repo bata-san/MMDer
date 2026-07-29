@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prepare:background": "python scripts/build-background.py",
+    "dev:background": "npm run prepare:background && vite",
     "build:client": "vite build",
+    "build:background": "npm run prepare:background && npm run build:client",
     "build": "npm run build:client",
     "typecheck:client": "tsc -p tsconfig.json --noEmit",
     "typecheck:worker": "tsc -p tsconfig.worker.json --noEmit",

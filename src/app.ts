@@ -1,3 +1,4 @@
+import { loadBuiltInBackground } from "./background.js";
 import { updateInteraction, setupInteraction } from "./interaction.js";
 import { updateLife } from "./life.js";
 import { recomputeDuration } from "./motion.js";
@@ -78,6 +79,7 @@ async function start(): Promise<void> {
   loadDefaultHdr();
   window.addEventListener("resize", resizeScene);
   renderer.setAnimationLoop(animate);
+  void loadBuiltInBackground();
 }
 
 void start();

@@ -1,8 +1,13 @@
-import { defineConfig, type Plugin } from 'vite';
-import tailwindcss from '@tailwindcss/vite';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import tailwindcss from '@tailwindcss/vite';
+import { defineConfig, type Plugin } from 'vite';
 
 const BUILD_VERSION = 'v6.0.0';
+const privateBackgroundModule = resolve(__dirname, './private/background-data.ts');
+const backgroundModule = existsSync(privateBackgroundModule)
+  ? privateBackgroundModule
+  : resolve(__dirname, './src/background-data.empty.ts');
 
 function cloudflareShell(): Plugin {
   return {
@@ -27,7 +32,12 @@ function cloudflareShell(): Plugin {
 export default defineConfig({
   plugins: [tailwindcss(), cloudflareShell()],
   server: { fs: { strict: false } },
-  resolve: { alias: { '@': resolve(__dirname, './src') } },
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './src'),
+      'virtual:mmd-background-data': backgroundModule,
+    },
+  },
   publicDir: false,
   build: {
     outDir: 'build/client',
